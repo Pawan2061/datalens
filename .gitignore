@@ -1,0 +1,49 @@
+# ── Environment & Secrets (NEVER commit) ──
+.env
+.env.local
+.env.production
+.env.*.local
+env.yaml
+env_vars_deploy.yaml
+client_secret_*.json
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+
+# ── Node ──
+node_modules/
+dist/
+.vite/
+
+# ── Build artifacts ──
+build/
+*.egg
+*.whl
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+.claude/
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── Uploads & runtime data ──
+uploads/
+*.sqlite
+*.db
+*.log
+
+# ── Misc ──
+svg_bbox.js
