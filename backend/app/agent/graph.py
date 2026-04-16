@@ -11,6 +11,10 @@ from langgraph.prebuilt import create_react_agent
 from app.agent.models import AgentEvent, AgentEventType
 from app.agent.prompts import build_system_prompt
 from app.agent.schema_cache import schema_cache
+from app.agent.api_tool_cache import (
+    get_cached_workspace_api_tools,
+    set_cached_workspace_api_tools,
+)
 from app.agent.tools import (
     ask_clarification,
     execute_sql,
@@ -255,6 +259,9 @@ async def run_agent(
         from app.agent.profiler import load_profile
 
         async def _load_api_tools() -> list[dict]:
+            cached_tools = get_cached_workspace_api_tools(workspace_id)
+            if cached_tools is not None:
+                return cached_tools
             try:
                 from app.db.insight_db import insight_db
                 if not insight_db.is_ready:
@@ -267,7 +274,9 @@ async def run_agent(
                         partition_key=workspace_id,
                     ))
                 )
-                return items[0]["api_tools"] if items and items[0].get("api_tools") else []
+                tools = items[0]["api_tools"] if items and items[0].get("api_tools") else []
+                set_cached_workspace_api_tools(workspace_id, tools)
+                return tools
             except Exception:
                 return []  # API tools are optional — don't block analysis
 

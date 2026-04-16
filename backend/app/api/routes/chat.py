@@ -8,6 +8,7 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
+from app.auth.user_doc_cache import get_cached_user_doc, set_cached_user_doc
 from app.agent.chart_recommender import recommend_charts
 from app.agent.graph import run_agent
 from app.agent.models import AgentEvent, AgentEventType
@@ -26,6 +27,7 @@ router = APIRouter()
 # In-memory event queues per session
 _event_queues: dict[str, asyncio.Queue] = {}
 _results: dict[str, dict] = {}
+_STREAM_QUEUE_WAIT_SECONDS = 10.0
 
 
 def _serialize_event(event: AgentEvent) -> dict:
@@ -36,11 +38,24 @@ def _serialize_event(event: AgentEvent) -> dict:
 @router.post("/api/chat")
 async def chat(request: ChatRequest):
     session_id = request.session_id or uuid.uuid4().hex[:16]
+    queue = _event_queues.get(session_id)
+    if queue is None:
+        queue = asyncio.Queue()
+        _event_queues[session_id] = queue
+
+    await queue.put(
+        AgentEvent(
+            event_type=AgentEventType.thinking,
+            data={"step": "request", "content": "Preparing analysis..."},
+        )
+    )
 
     # ── Guardrail Layer 1: Rule-based input filter ────────────────
     from app.guardrails.input_filter import check_input, Verdict
     layer1 = check_input(request.message)
     if layer1.verdict == Verdict.BLOCK:
+        await queue.put(None)
+        _event_queues.pop(session_id, None)
         raise HTTPException(
             status_code=400,
             detail=f"Request blocked: {layer1.reason}",
@@ -66,31 +81,14 @@ async def chat(request: ChatRequest):
         """Fetch user document from DB for quota check. Returns None on miss/error."""
         if not request.user_id:
             return None
-        try:
-            from app.db.insight_db import insight_db
-            if not insight_db.is_ready:
-                return None
-            users = insight_db.container("users")
-            query = "SELECT * FROM c WHERE c.id = @id"
-            params = [{"name": "@id", "value": request.user_id}]
-            # query_items is a blocking iterator — run it off the event loop
-            results = await asyncio.to_thread(
-                lambda: list(
-                    users.query_items(
-                        query=query,
-                        parameters=params,
-                        enable_cross_partition_query=True,
-                    )
-                )
-            )
-            return results[0] if results else None
-        except Exception:
-            return None  # Don't block chat if user lookup fails
+        return await _load_user_doc(request.user_id)
 
     layer2, user_doc = await asyncio.gather(_run_layer2(), _fetch_user_doc())
 
     # ── Enforce L2 verdict ────────────────────────────────────────
     if layer2.verdict == Verdict.BLOCK:
+        await queue.put(None)
+        _event_queues.pop(session_id, None)
         raise HTTPException(
             status_code=400,
             detail=f"Request blocked: {layer2.reason}",
@@ -102,6 +100,8 @@ async def chat(request: ChatRequest):
             from app.auth.quota import check_quota
             quota = await check_quota(user_doc)
             if not quota.allowed:
+                await queue.put(None)
+                _event_queues.pop(session_id, None)
                 raise HTTPException(status_code=429, detail=quota.reason)
         except HTTPException:
             raise
@@ -119,9 +119,6 @@ async def chat(request: ChatRequest):
             "FLAGGED request from user=%s: reason=%s | message=%s",
             request.user_id, layer1.reason, request.message[:200],
         )
-
-    queue: asyncio.Queue = asyncio.Queue()
-    _event_queues[session_id] = queue
 
     # Build history dicts for the agent
     history = [h.model_dump() for h in request.history] if request.history else []
@@ -204,12 +201,16 @@ def _record_analytics(
         # Look up user email
         user_email = ""
         if user_id:
-            users = insight_db.container("users")
-            q = "SELECT c.email FROM c WHERE c.id = @id"
-            p = [{"name": "@id", "value": user_id}]
-            res = list(users.query_items(query=q, parameters=p, enable_cross_partition_query=True))
-            if res:
-                user_email = res[0].get("email", "")
+            cached_user = get_cached_user_doc(user_id)
+            if cached_user:
+                user_email = cached_user.get("email", "")
+            else:
+                users = insight_db.container("users")
+                q = "SELECT c.email FROM c WHERE c.id = @id"
+                p = [{"name": "@id", "value": user_id}]
+                res = list(users.query_items(query=q, parameters=p, enable_cross_partition_query=True))
+                if res:
+                    user_email = res[0].get("email", "")
 
         from app.schemas.persistence import AnalyticsEvent
         event = AnalyticsEvent(
@@ -455,10 +456,16 @@ def _get_mock_data_for_question(question: str) -> list[list[dict]]:
 @router.get("/api/chat/stream/{session_id}")
 async def chat_stream(session_id: str):
     """SSE endpoint -- streams agent events for a session."""
-    if session_id not in _event_queues:
-        raise HTTPException(status_code=404, detail="Session not found")
+    queue: asyncio.Queue | None = None
+    deadline = time.monotonic() + _STREAM_QUEUE_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        queue = _event_queues.get(session_id)
+        if queue is not None:
+            break
+        await asyncio.sleep(0.1)
 
-    queue = _event_queues[session_id]
+    if queue is None:
+        raise HTTPException(status_code=404, detail="Session not found")
 
     async def event_generator():
         while True:
@@ -476,3 +483,32 @@ async def chat_stream(session_id: str):
         _event_queues.pop(session_id, None)
 
     return EventSourceResponse(event_generator())
+
+
+async def _load_user_doc(user_id: str) -> dict | None:
+    cached = get_cached_user_doc(user_id)
+    if cached is not None:
+        return cached
+
+    try:
+        from app.db.insight_db import insight_db
+        if not insight_db.is_ready:
+            return None
+        users = insight_db.container("users")
+        query = "SELECT * FROM c WHERE c.id = @id"
+        params = [{"name": "@id", "value": user_id}]
+        results = await asyncio.to_thread(
+            lambda: list(
+                users.query_items(
+                    query=query,
+                    parameters=params,
+                    enable_cross_partition_query=True,
+                )
+            )
+        )
+        if not results:
+            return None
+        set_cached_user_doc(user_id, results[0])
+        return results[0]
+    except Exception:
+        return None

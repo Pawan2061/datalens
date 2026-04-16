@@ -61,7 +61,16 @@ export function useChat(workspaceId?: string) {
       addMessage(sessionId, assistantMessage);
 
       // ── Backend mode ──
+      let requestFailed = false;
       try {
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+        }
+
+        const currentSessionId = sessionId;
+        const es = createEventSource(currentSessionId);
+        eventSourceRef.current = es;
+
         // Build condensed conversation history for the agent
         const currentState = useChatStore.getState();
         const currentSession = currentState.sessions.find((s) => s.id === sessionId);
@@ -85,17 +94,6 @@ export function useChat(workspaceId?: string) {
             }
           }
         }
-
-        const result = await apiSendMessage(sessionId, content, connectionId, mode, workspaceId || '', history, customerScope);
-        const confirmedSessionId = result.session_id || sessionId;
-
-        if (eventSourceRef.current) {
-          eventSourceRef.current.close();
-        }
-        const es = createEventSource(confirmedSessionId);
-        eventSourceRef.current = es;
-
-        const currentSessionId = confirmedSessionId;
 
         const handleEvent = (eventType: string) => (event: MessageEvent) => {
           let parsed: Record<string, unknown>;
@@ -195,10 +193,15 @@ export function useChat(workspaceId?: string) {
           setMessageStreaming(currentSessionId, assistantMessageId, false);
           setIsLoading(false);
           es.close();
-          eventSourceRef.current = null;
+          if (eventSourceRef.current === es) {
+            eventSourceRef.current = null;
+          }
         });
 
         es.onerror = () => {
+          if (requestFailed) {
+            return;
+          }
           addStep(currentSessionId, assistantMessageId, {
             type: 'error',
             content: 'Connection to server lost',
@@ -208,9 +211,18 @@ export function useChat(workspaceId?: string) {
           setMessageStreaming(currentSessionId, assistantMessageId, false);
           setIsLoading(false);
           es.close();
-          eventSourceRef.current = null;
+          if (eventSourceRef.current === es) {
+            eventSourceRef.current = null;
+          }
         };
+
+        await apiSendMessage(sessionId, content, connectionId, mode, workspaceId || '', history, customerScope);
       } catch (error) {
+        requestFailed = true;
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+          eventSourceRef.current = null;
+        }
         const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
         addStep(sessionId, assistantMessageId, {
           type: 'error',

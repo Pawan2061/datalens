@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
 
+from app.agent.api_tool_cache import invalidate_workspace_api_tools_cache
 from app.db.insight_db import insight_db
 from app.api.routes.users import get_current_user
 from app.schemas.persistence import (
@@ -287,6 +288,7 @@ async def add_api_tool(workspace_id: str, body: ApiToolConfig, current_user: dic
 
     container = insight_db.container("workspaces")
     container.upsert_item(ws)
+    invalidate_workspace_api_tools_cache(workspace_id)
     return body.model_dump()
 
 
@@ -306,6 +308,7 @@ async def remove_api_tool(workspace_id: str, tool_id: str, current_user: dict = 
 
     container = insight_db.container("workspaces")
     container.upsert_item(ws)
+    invalidate_workspace_api_tools_cache(workspace_id)
     return {"status": "deleted", "tool_id": tool_id}
 
 
@@ -333,6 +336,7 @@ async def update_api_tool(workspace_id: str, tool_id: str, body: ApiToolConfig, 
 
     container = insight_db.container("workspaces")
     container.upsert_item(ws)
+    invalidate_workspace_api_tools_cache(workspace_id)
     return body.model_dump()
 
 
@@ -390,6 +394,7 @@ async def test_api_tool(workspace_id: str, tool_id: str, body: ApiToolTestReques
                 t["test_status"] = "failed"
         ws["api_tools"] = tools
         insight_db.container("workspaces").upsert_item(ws)
+        invalidate_workspace_api_tools_cache(workspace_id)
         raise HTTPException(status_code=502, detail=f"API call failed: {str(e)}")
 
     duration_ms = (time.perf_counter() - start) * 1000
@@ -400,6 +405,7 @@ async def test_api_tool(workspace_id: str, tool_id: str, body: ApiToolTestReques
             t["test_status"] = "success"
     ws["api_tools"] = tools
     insight_db.container("workspaces").upsert_item(ws)
+    invalidate_workspace_api_tools_cache(workspace_id)
 
     return {
         "status": "success",

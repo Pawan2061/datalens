@@ -579,7 +579,93 @@ def _detect_query_guidance(
                 f"always filter with IS_DEFINED or IS NOT NULL before aggregating."
             )
 
+    guidance.extend(_detect_line_item_pattern(table, sample_rows))
     return guidance
+
+
+# ── Line-item / repeated-header detection ────────────────────────
+
+_LINE_ITEM_KEY_SUFFIXES = (
+    "_no", "_number", "_num", "_ref", "_invoice", "_order",
+    "_doc", "_txn", "_transaction", "_receipt", "_voucher", "_bill",
+)
+_NUMERIC_TYPES = ("int", "float", "decimal", "numeric", "double", "money", "real", "number")
+
+
+def _detect_line_item_pattern(
+    table: "TableProfile",
+    sample_rows: list[dict],
+) -> list[str]:
+    """Detect tables where a numeric column holds a per-document total that is
+    repeated across line-item rows (e.g. inv_amount on every invoice line).
+
+    Adds a LINE-ITEM TABLE guidance note so the agent uses MAX() + a CTE
+    instead of SUM() directly, preventing ~Nx overcounting.
+    """
+    if table.row_count < 20:
+        return []
+
+    # 1. Find candidate document-key columns (e.g. invoice_no, order_no)
+    key_cols = [
+        col for col in table.columns
+        if not col.name.startswith("_")
+        and any(col.name.lower().endswith(s) for s in _LINE_ITEM_KEY_SUFFIXES)
+        and 0 < col.distinct_count < table.row_count * 0.9
+    ]
+    if not key_cols:
+        return []
+
+    for key_col in key_cols[:2]:
+        avg_lines = table.row_count / max(key_col.distinct_count, 1)
+        if avg_lines < 1.5:
+            continue
+
+        # 2a. Sample-row confirmation: same key → same numeric value on multiple rows
+        confirmed: list[str] = []
+        if sample_rows:
+            key_vals = [row.get(key_col.name) for row in sample_rows]
+            dup_keys = {v for v in key_vals if key_vals.count(v) > 1 and v is not None}
+            for col in table.columns:
+                if col.name.startswith("_"):
+                    continue
+                if not any(t in col.type.lower() for t in _NUMERIC_TYPES):
+                    continue
+                for dk in dup_keys:
+                    dup_rows = [r for r in sample_rows if r.get(key_col.name) == dk]
+                    vals = {r.get(col.name) for r in dup_rows if r.get(col.name) is not None}
+                    if len(vals) == 1:
+                        confirmed.append(col.name)
+                        break
+
+        # 2b. Statistical fallback: numeric col cardinality ≈ key col cardinality
+        stat_cols: list[str] = []
+        if not confirmed:
+            for col in table.columns:
+                if col.name.startswith("_") or col.distinct_count <= 0:
+                    continue
+                if not any(t in col.type.lower() for t in _NUMERIC_TYPES):
+                    continue
+                ratio = col.distinct_count / max(key_col.distinct_count, 1)
+                if 0.2 < ratio < 2.5:
+                    stat_cols.append(col.name)
+
+        header_cols = confirmed or stat_cols[:4]
+        if not header_cols:
+            continue
+
+        primary = header_cols[0]
+        cols_str = ", ".join(f"'{c}'" for c in header_cols[:3])
+        return [
+            f"LINE-ITEM TABLE: '{table.name}' has ~{avg_lines:.1f} rows per {key_col.name}. "
+            f"Column(s) {cols_str} are header-level totals repeated per line — "
+            f"direct SUM() overcounts by ~{avg_lines:.0f}x. "
+            f"Always deduplicate first: "
+            f"WITH base AS (SELECT {key_col.name}, MAX({primary}) AS {primary} "
+            f"FROM {table.name} GROUP BY {key_col.name}) "
+            f"then aggregate base. Use MAX() for header totals, SUM() for true line amounts."
+        ]
+
+    return []
 
 
 # ── Step 4: LLM directional synthesis ────────────────────────────
@@ -950,12 +1036,12 @@ def _format_profile_text(profile: DataProfile, connector_type: str) -> str:
     all_guidance: list[str] = []
     for tp in biz_tables:
         for g in tp.query_guidance:
-            if len(g) < 150:
+            if len(g) < 400:
                 all_guidance.append(g)
 
     if all_guidance:
         sections.append("## Query Notes")
-        for g in all_guidance[:6]:
+        for g in all_guidance[:8]:
             sections.append(f"- {g}")
         sections.append("")
 

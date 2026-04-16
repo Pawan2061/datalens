@@ -74,18 +74,18 @@ export function refreshQuery(
   return new Promise(async (resolve, reject) => {
     const tempSessionId = `__refresh_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     let settled = false;
+    let requestFailed = false;
+    const es = createEventSource(tempSessionId);
 
     const timeout = setTimeout(() => {
       if (!settled) {
         settled = true;
+        es.close();
         reject(new Error('Refresh timed out'));
       }
     }, 120000);
 
     try {
-      await sendMessage(tempSessionId, question, connectionId, mode);
-      const es = createEventSource(tempSessionId);
-
       es.addEventListener('final_result', (event: MessageEvent) => {
         if (settled) return;
         try {
@@ -110,6 +110,9 @@ export function refreshQuery(
       });
 
       es.onerror = () => {
+        if (requestFailed) {
+          return;
+        }
         es.close();
         if (!settled) {
           settled = true;
@@ -117,7 +120,11 @@ export function refreshQuery(
           reject(new Error('Connection lost during refresh'));
         }
       };
+
+      await sendMessage(tempSessionId, question, connectionId, mode);
     } catch (err) {
+      requestFailed = true;
+      es.close();
       if (!settled) {
         settled = true;
         clearTimeout(timeout);

@@ -253,6 +253,22 @@ QUERY TIPS:
 - "X and Y by Z" → ONE query: SELECT Z, AGG(X), AGG(Y) FROM ... GROUP BY Z
 - Prefer combined queries over separate ones for multi-metric questions.
 - ALWAYS batch independent tool calls in a single turn.
+- LINE-ITEM TABLES — MANDATORY RULE: Tables named *invoice*, *order*, *transaction*, *bill*,
+  *receipt*, *voucher*, *ledger*, or similar almost always have multiple rows per document
+  (one row per line item). Amount columns like inv_amount, total_amount, invoice_total etc.
+  are typically the SAME value repeated on every line — SUM() on them overcounts by the
+  number of line items per document.
+  ALWAYS deduplicate to one row per document before aggregating. Two equivalent patterns:
+    -- Subquery (shorter):
+    SELECT COUNT(*), SUM(amount_col), AVG(amount_col)
+    FROM (SELECT doc_id, MAX(amount_col) AS amount_col FROM tbl GROUP BY doc_id) t
+    -- CTE (more readable for complex queries):
+    WITH base AS (SELECT doc_id, MAX(amount_col) AS amount_col FROM tbl GROUP BY doc_id)
+    SELECT COUNT(*), SUM(amount_col), AVG(amount_col) FROM base
+  Use COUNT(DISTINCT doc_id) only as a quick check — SUM/AVG still need the CTE.
+  Exception: if a column is clearly a line-level amount (e.g. unit_price, line_qty,
+  item_amount), SUM() is correct without a CTE.
+  If the profile says "LINE-ITEM TABLE", follow its guidance exactly.
 
 {mode_instruction}
 

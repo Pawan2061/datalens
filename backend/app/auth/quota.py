@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from app.auth.user_doc_cache import set_cached_user_doc
 from app.db.insight_db import insight_db
 from app.schemas.persistence import QuotaCheckResult, UsageRecord
 
@@ -114,6 +115,7 @@ async def record_usage(
     doc["total_cost_usd"] = round(doc.get("total_cost_usd", 0.0) + cost_usd, 6)
 
     users.upsert_item(doc)
+    set_cached_user_doc(user_id, doc)
 
     # Write usage log entry
     try:

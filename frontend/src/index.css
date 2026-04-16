@@ -1888,6 +1888,31 @@ body {
   padding-left: 1px;
 }
 
+.ts-tech-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 8px;
+}
+.ts-tech-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ts-tech-toggle:hover {
+  color: #475569;
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
 /* SQL section */
 .ts-sql-section {
   margin-top: 6px;
