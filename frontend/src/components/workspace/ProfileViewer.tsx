@@ -22,7 +22,7 @@ import {
   Loader2,
   Check,
 } from 'lucide-react';
-import { getProfileStatus, updateProfileQuestions } from '../../services/api';
+import { getProfileStatus, updateProfile } from '../../services/api';
 
 interface ProfileViewerProps {
   isOpen: boolean;
@@ -48,6 +48,12 @@ interface TableProfile {
   row_count: number;
   columns: ColumnProfile[];
   sample_rows: Record<string, unknown>[];
+  business_summary: string;
+  analysis_angles: string[];
+}
+
+interface EditableTableInsight {
+  name: string;
   business_summary: string;
   analysis_angles: string[];
 }
@@ -110,6 +116,10 @@ export default function ProfileViewer({
   const [editMode, setEditMode] = useState(false);
   const [editPlan, setEditPlan] = useState<PlaybookEntry[]>([]);
   const [editQuestions, setEditQuestions] = useState<string[]>([]);
+  const [editExecutiveSummary, setEditExecutiveSummary] = useState('');
+  const [editDataArchitecture, setEditDataArchitecture] = useState('');
+  const [editCrossTableInsights, setEditCrossTableInsights] = useState<string[]>([]);
+  const [editTables, setEditTables] = useState<EditableTableInsight[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveToast, setSaveToast] = useState<string | null>(null);
   const [expandedEdit, setExpandedEdit] = useState<number | null>(null);
@@ -150,6 +160,16 @@ export default function ProfileViewer({
 
   const startEdit = () => {
     if (!profile) return;
+    setEditExecutiveSummary(profile.executive_summary || '');
+    setEditDataArchitecture(profile.data_architecture || '');
+    setEditCrossTableInsights([...(profile.cross_table_insights || [])]);
+    setEditTables(
+      profile.tables.map((table) => ({
+        name: table.name,
+        business_summary: table.business_summary || '',
+        analysis_angles: [...table.analysis_angles],
+      }))
+    );
     setEditPlan(profile.directional_plan.map((e) => ({ ...e, tables: [...e.tables], key_columns: [...e.key_columns] })));
     setEditQuestions([...profile.suggested_questions]);
     setEditMode(true);
@@ -159,11 +179,26 @@ export default function ProfileViewer({
   const cancelEdit = () => {
     setEditMode(false);
     setEditPlan([]);
+    setEditQuestions([]);
+    setEditExecutiveSummary('');
+    setEditDataArchitecture('');
+    setEditCrossTableInsights([]);
+    setEditTables([]);
     setExpandedEdit(null);
   };
 
   const updateEntry = (idx: number, field: keyof PlaybookEntry, value: string | string[]) => {
     setEditPlan((prev) => prev.map((e, i) => i === idx ? { ...e, [field]: value } : e));
+  };
+
+  const updateTableInsight = (
+    tableName: string,
+    field: keyof EditableTableInsight,
+    value: string | string[],
+  ) => {
+    setEditTables((prev) => prev.map((table) => (
+      table.name === tableName ? { ...table, [field]: value } : table
+    )));
   };
 
   const addEntry = () => {
@@ -194,13 +229,37 @@ export default function ProfileViewer({
   const saveEdits = async () => {
     setSaving(true);
     try {
-      await updateProfileQuestions(workspaceId, connectionId, editPlan, editQuestions);
+      await updateProfile(workspaceId, connectionId, {
+        executive_summary: editExecutiveSummary,
+        data_architecture: editDataArchitecture,
+        cross_table_insights: editCrossTableInsights,
+        suggested_questions: editQuestions,
+        directional_plan: editPlan,
+        tables: editTables,
+      });
       // Update local profile
       if (profile) {
-        setProfile({ ...profile, directional_plan: editPlan, suggested_questions: editQuestions });
+        setProfile({
+          ...profile,
+          executive_summary: editExecutiveSummary,
+          data_architecture: editDataArchitecture,
+          cross_table_insights: editCrossTableInsights,
+          suggested_questions: editQuestions,
+          directional_plan: editPlan,
+          tables: profile.tables.map((table) => {
+            const editTable = editTables.find((entry) => entry.name === table.name);
+            return editTable
+              ? {
+                  ...table,
+                  business_summary: editTable.business_summary,
+                  analysis_angles: editTable.analysis_angles,
+                }
+              : table;
+          }),
+        });
       }
       setEditMode(false);
-      setSaveToast('Questions saved successfully');
+      setSaveToast('Profile insights saved successfully');
       setTimeout(() => setSaveToast(null), 3000);
     } catch (e: any) {
       setSaveToast(`Error: ${e.message}`);
@@ -234,9 +293,26 @@ export default function ProfileViewer({
               <p className="pv-subtitle">{connectionName}</p>
             </div>
           </div>
+          <div className="pv-header-actions">
+            {!loading && profile && (
+              !editMode ? (
+                <button className="pv-edit-btn" onClick={startEdit}>
+                  <Pencil size={13} /> Edit Insights
+                </button>
+              ) : (
+                <>
+                  <button className="pv-edit-btn pv-edit-btn--cancel" onClick={cancelEdit}>Cancel</button>
+                  <button className="pv-edit-btn pv-edit-btn--save" onClick={saveEdits} disabled={saving}>
+                    {saving ? <Loader2 size={13} className="ts-spinner" /> : <Save size={13} />}
+                    {saving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </>
+              )
+            )}
           <button className="pv-close-btn" onClick={onClose}>
             <X size={18} />
           </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -275,24 +351,44 @@ export default function ProfileViewer({
               </div>
 
               {/* Executive Summary */}
-              {profile.executive_summary && (
+              {(editMode || profile.executive_summary) && (
                 <div className="pv-section">
                   <h3 className="pv-section-title">
                     <FileText size={15} />
                     Executive Summary
                   </h3>
-                  <p className="pv-narrative">{profile.executive_summary}</p>
+                  {editMode ? (
+                    <textarea
+                      className="pv-edit-textarea"
+                      rows={5}
+                      value={editExecutiveSummary}
+                      onChange={(e) => setEditExecutiveSummary(e.target.value)}
+                      placeholder="Summarize the most important characteristics of this dataset."
+                    />
+                  ) : (
+                    <p className="pv-narrative">{profile.executive_summary}</p>
+                  )}
                 </div>
               )}
 
               {/* Data Architecture */}
-              {profile.data_architecture && (
+              {(editMode || profile.data_architecture) && (
                 <div className="pv-section">
                   <h3 className="pv-section-title">
                     <GitBranch size={15} />
                     Data Architecture &amp; Relationships
                   </h3>
-                  <p className="pv-narrative">{profile.data_architecture}</p>
+                  {editMode ? (
+                    <textarea
+                      className="pv-edit-textarea"
+                      rows={5}
+                      value={editDataArchitecture}
+                      onChange={(e) => setEditDataArchitecture(e.target.value)}
+                      placeholder="Describe key joins, dimensions, and how the tables relate."
+                    />
+                  ) : (
+                    <p className="pv-narrative">{profile.data_architecture}</p>
+                  )}
                 </div>
               )}
 
@@ -324,8 +420,37 @@ export default function ProfileViewer({
 
                       {isExpanded && (
                         <div className="pv-table-body">
-                          {table.business_summary && (
-                            <p className="pv-table-summary">{table.business_summary}</p>
+                          {editMode ? (
+                            <div className="pv-edit-table-section">
+                              <label className="pv-edit-label">
+                                Table summary
+                                <textarea
+                                  className="pv-edit-textarea"
+                                  rows={3}
+                                  value={editTables.find((entry) => entry.name === table.name)?.business_summary || ''}
+                                  onChange={(e) => updateTableInsight(table.name, 'business_summary', e.target.value)}
+                                  placeholder="Explain what this table represents and how it should be used."
+                                />
+                              </label>
+                              <label className="pv-edit-label">
+                                Analysis angles <span style={{ fontSize: 11, color: '#9ca3af' }}>(one per line)</span>
+                                <textarea
+                                  className="pv-edit-textarea"
+                                  rows={4}
+                                  value={(editTables.find((entry) => entry.name === table.name)?.analysis_angles || []).join('\n')}
+                                  onChange={(e) => updateTableInsight(
+                                    table.name,
+                                    'analysis_angles',
+                                    e.target.value.split('\n').map((value) => value.trim()).filter(Boolean),
+                                  )}
+                                  placeholder={'Revenue trend by month\nTop entities by value\nMissing-data review'}
+                                />
+                              </label>
+                            </div>
+                          ) : (
+                            table.business_summary && (
+                              <p className="pv-table-summary">{table.business_summary}</p>
+                            )
                           )}
 
                           {/* Columns */}
@@ -386,7 +511,7 @@ export default function ProfileViewer({
                           )}
 
                           {/* Analysis angles */}
-                          {table.analysis_angles.length > 0 && (
+                          {!editMode && table.analysis_angles.length > 0 && (
                             <div className="pv-angles">
                               <span className="pv-angles-label">
                                 <Lightbulb size={13} />
@@ -407,17 +532,32 @@ export default function ProfileViewer({
               </div>
 
               {/* Cross-table insights */}
-              {profile.cross_table_insights.length > 0 && (
+              {(editMode || profile.cross_table_insights.length > 0) && (
                 <div className="pv-section">
                   <h3 className="pv-section-title">
                     <Link2 size={15} />
                     Cross-Table Relationships
                   </h3>
-                  <ul className="pv-insight-list">
-                    {profile.cross_table_insights.map((insight, i) => (
-                      <li key={i}>{insight}</li>
-                    ))}
-                  </ul>
+                  {editMode ? (
+                    <label className="pv-edit-label">
+                      Insight bullets <span style={{ fontSize: 11, color: '#9ca3af' }}>(one per line)</span>
+                      <textarea
+                        className="pv-edit-textarea"
+                        rows={5}
+                        value={editCrossTableInsights.join('\n')}
+                        onChange={(e) => setEditCrossTableInsights(
+                          e.target.value.split('\n').map((value) => value.trim()).filter(Boolean),
+                        )}
+                        placeholder={'Customer joins invoice via customer_id\nInvoice lines roll up to invoice header'}
+                      />
+                    </label>
+                  ) : (
+                    <ul className="pv-insight-list">
+                      {profile.cross_table_insights.map((insight, i) => (
+                        <li key={i}>{insight}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
 
@@ -431,19 +571,6 @@ export default function ProfileViewer({
                       ({editMode ? editPlan.length : (profile.directional_plan?.length || 0)} questions)
                     </span>
                   </h3>
-                  {!editMode ? (
-                    <button className="pv-edit-btn" onClick={startEdit}>
-                      <Pencil size={13} /> Edit Questions
-                    </button>
-                  ) : (
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button className="pv-edit-btn pv-edit-btn--cancel" onClick={cancelEdit}>Cancel</button>
-                      <button className="pv-edit-btn pv-edit-btn--save" onClick={saveEdits} disabled={saving}>
-                        {saving ? <Loader2 size={13} className="ts-spinner" /> : <Save size={13} />}
-                        {saving ? 'Saving...' : 'Save Changes'}
-                      </button>
-                    </div>
-                  )}
                 </div>
 
                 {editMode ? (
@@ -560,15 +687,38 @@ export default function ProfileViewer({
                         </div>
                       ))}
                     </div>
-                  ) : profile.suggested_questions.length > 0 ? (
-                    <div className="pv-questions-grid">
-                      {profile.suggested_questions.map((q, i) => (
-                        <div key={i} className="pv-question-card">{q}</div>
-                      ))}
-                    </div>
                   ) : (
-                    <p style={{ color: '#9ca3af', fontSize: 13 }}>No questions yet. Click "Edit Questions" to add some.</p>
+                    <p style={{ color: '#9ca3af', fontSize: 13 }}>No playbook entries yet. Switch to edit mode to add them.</p>
                   )
+                )}
+              </div>
+
+              <div className="pv-section">
+                <h3 className="pv-section-title">
+                  <Lightbulb size={15} />
+                  Suggested Questions
+                </h3>
+                {editMode ? (
+                  <label className="pv-edit-label">
+                    Questions <span style={{ fontSize: 11, color: '#9ca3af' }}>(one per line)</span>
+                    <textarea
+                      className="pv-edit-textarea"
+                      rows={5}
+                      value={editQuestions.join('\n')}
+                      onChange={(e) => setEditQuestions(
+                        e.target.value.split('\n').map((value) => value.trim()).filter(Boolean),
+                      )}
+                      placeholder={'What drives late payments?\nWhich customers contribute most revenue?'}
+                    />
+                  </label>
+                ) : profile.suggested_questions.length > 0 ? (
+                  <div className="pv-questions-grid">
+                    {profile.suggested_questions.map((q, i) => (
+                      <div key={i} className="pv-question-card">{q}</div>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={{ color: '#9ca3af', fontSize: 13 }}>No suggested questions yet.</p>
                 )}
               </div>
 

@@ -97,6 +97,9 @@ const STEP_CONFIG: Record<string, { icon: typeof Brain; getLabel: (s: AgentStep)
 export default function ThinkingSteps({ steps, isStreaming }: ThinkingStepsProps) {
   const [expanded, setExpanded] = useState(true);
   const [expandedDetail, setExpandedDetail] = useState<number | null>(null);
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
+
+  const hasAnySql = steps.some((step) => !!step.sql);
 
   if (steps.length === 0 && !isStreaming) return null;
 
@@ -116,6 +119,25 @@ export default function ThinkingSteps({ steps, isStreaming }: ThinkingStepsProps
 
       {expanded && (
         <div className="ts-steps">
+          {hasAnySql && (
+            <div className="ts-tech-row">
+              <button
+                onClick={() => {
+                  setShowTechnicalDetails((prev) => {
+                    const next = !prev;
+                    if (!next) {
+                      setExpandedDetail(null);
+                    }
+                    return next;
+                  });
+                }}
+                className="ts-tech-toggle"
+              >
+                <Code2 size={12} />
+                {showTechnicalDetails ? 'Hide technical details' : 'Show technical details'}
+              </button>
+            </div>
+          )}
           {steps.map((step, i) => {
             const cfg = STEP_CONFIG[step.type] || STEP_CONFIG.thinking;
             const isLast = i === steps.length - 1 && !isStreaming;
@@ -131,7 +153,7 @@ export default function ThinkingSteps({ steps, isStreaming }: ThinkingStepsProps
             const hasSql = !!step.sql;
             const parsed = tryParse(step);
             const errorDetail = (parsed?.error_detail as string) || '';
-            const hasExpandable = hasReasoning || hasSql || (isError && errorDetail);
+            const hasExpandable = hasReasoning || (showTechnicalDetails && hasSql) || (isError && errorDetail);
 
             return (
               <div key={i} className={`ts-step ${isReasoning(step) ? 'ts-step--reasoning' : ''}`}>
@@ -165,7 +187,7 @@ export default function ThinkingSteps({ steps, isStreaming }: ThinkingStepsProps
                         <Code2 size={12} />
                         {expandedDetail === i
                           ? 'Hide details'
-                          : hasSql ? 'View SQL' : hasReasoning ? 'Full reasoning' : 'Technical detail'}
+                          : showTechnicalDetails && hasSql ? 'View SQL' : hasReasoning ? 'Full reasoning' : 'Technical detail'}
                       </button>
                       {expandedDetail === i && (
                         <>

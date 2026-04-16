@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import Markdown from 'react-markdown';
 import { Sparkles, LayoutGrid, Check, Trash2, ThumbsUp, ThumbsDown, Zap } from 'lucide-react';
 import type { ChatMessage, InsightResult } from '../../types/chat';
 import ThinkingSteps from './ThinkingSteps';
@@ -84,6 +85,13 @@ export default function MessageBubble({ message, onFollowUp, onPushToCanvas, onD
         {/* Thinking steps */}
         {(message.steps.length > 0 || message.isStreaming) && (
           <ThinkingSteps steps={message.steps} isStreaming={!!message.isStreaming && !message.insightResult} />
+        )}
+
+        {/* Streaming narrative — shown while synthesis is generating, hidden once insightResult arrives */}
+        {message.streamingNarrative && !message.insightResult && (
+          <div className="chat-streaming-narrative">
+            <Markdown>{message.streamingNarrative}</Markdown>
+          </div>
         )}
 
         {/* Insight result */}

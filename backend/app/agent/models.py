@@ -13,6 +13,7 @@ class AgentEventType(str, Enum):
     api_call_start = "api_call_start"
     api_call_result = "api_call_result"
     consolidating = "consolidating"
+    narrative_chunk = "narrative_chunk"
     chart_selected = "chart_selected"
     final_result = "final_result"
     clarification = "clarification"

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Workspace, WorkspaceCreate } from '../types/workspace';
+import type { Workspace, WorkspaceCreate, ScopeCustomer } from '../types/workspace';
 import type { ConnectionInfo } from '../types/connection';
 import {
   fetchWorkspaces,
@@ -49,6 +49,7 @@ interface WorkspaceState {
   removeConnectionFromWorkspace: (workspaceId: string, connectionId: string) => void;
   updateConnectionInWorkspace: (workspaceId: string, connectionId: string, updates: Partial<ConnectionInfo>) => void;
   setSelectedTables: (workspaceId: string, connectionId: string, tableNames: string[]) => void;
+  setScopeCustomers: (workspaceId: string, customers: ScopeCustomer[]) => void;
 
   // Persistence sync
   loadWorkspacesFromBackend: () => Promise<void>;
@@ -87,6 +88,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           icon: data.icon,
           connectionIds: [],
           connections: [],
+          scopeCustomers: [],
           createdAt: Date.now(),
           updatedAt: Date.now(),
           lastActiveAt: Date.now(),
@@ -187,6 +189,21 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         get().updateConnectionInWorkspace(workspaceId, connectionId, { selectedTableNames: tableNames });
       },
 
+      setScopeCustomers: (workspaceId: string, customers: ScopeCustomer[]) => {
+        set((state) => ({
+          workspaces: state.workspaces.map((ws) =>
+            ws.id === workspaceId
+              ? { ...ws, scopeCustomers: customers, updatedAt: Date.now() }
+              : ws
+          ),
+        }));
+        // Persist to backend immediately so it survives page reloads
+        const ws = get().workspaces.find((w) => w.id === workspaceId);
+        if (ws && !MOCK_IDS.includes(ws.id)) {
+          get().syncWorkspaceToBackend(ws);
+        }
+      },
+
       // ── Persistence sync ──────────────────────────────────────────
 
       loadWorkspacesFromBackend: async () => {
@@ -204,6 +221,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             icon: (doc.icon as string) || 'bar-chart-3',
             connectionIds: (doc.connection_ids as string[]) || [],
             connections: (doc.connections as ConnectionInfo[]) || [],
+            scopeCustomers: (doc.scope_customers as ScopeCustomer[]) || [],
             createdAt: doc.created_at ? new Date(doc.created_at as string).getTime() : Date.now(),
             updatedAt: doc.updated_at ? new Date(doc.updated_at as string).getTime() : Date.now(),
             lastActiveAt: doc.last_active_at ? new Date(doc.last_active_at as string).getTime() : Date.now(),
@@ -233,10 +251,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
                   ...(local.connectionIds || []),
                   ...(bw.connectionIds || []),
                 ])];
+                // Prefer backend scope_customers if present, else fall back to local
+                const scopeCustomers = (bw.scopeCustomers?.length ? bw.scopeCustomers : local.scopeCustomers) || [];
                 merged.push({
                   ...bw,
                   connections: allConns,
                   connectionIds: allConnIds,
+                  scopeCustomers,
                   // Use the most recent timestamps
                   updatedAt: Math.max(local.updatedAt, bw.updatedAt),
                   lastActiveAt: Math.max(local.lastActiveAt || 0, bw.lastActiveAt || 0),
@@ -268,6 +289,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             icon: workspace.icon,
             connections: workspace.connections as unknown as Record<string, unknown>[],
             connection_ids: workspace.connectionIds,
+            scope_customers: workspace.scopeCustomers,
           });
         } catch {
           // Update failed (maybe workspace doesn't exist on backend yet) — try create
@@ -278,6 +300,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               icon: workspace.icon,
               connections: workspace.connections as unknown as Record<string, unknown>[],
               connection_ids: workspace.connectionIds,
+              scope_customers: workspace.scopeCustomers,
             } as Parameters<typeof createWorkspaceOnBackend>[0]);
             // If backend assigned a different ID, update local store
             if (doc.id && doc.id !== workspace.id) {
@@ -307,6 +330,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const persistedWorkspaces = (persistedState.workspaces || []).map((w) => ({
           ...w,
           connections: w.connections || [],
+          scopeCustomers: w.scopeCustomers || [],
         }));
         const userCreated = persistedWorkspaces.filter((w) => !MOCK_IDS.includes(w.id));
         return {

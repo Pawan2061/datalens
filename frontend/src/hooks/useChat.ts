@@ -20,6 +20,7 @@ export function useChat(workspaceId?: string) {
   const addStep = useChatStore((s) => s.addStep);
   const setInsightResult = useChatStore((s) => s.setInsightResult);
   const setMessageStreaming = useChatStore((s) => s.setMessageStreaming);
+  const appendNarrativeChunk = useChatStore((s) => s.appendNarrativeChunk);
   const setActiveSession = useChatStore((s) => s.setActiveSession);
 
   const [isLoading, setIsLoading] = useState(false);
@@ -28,7 +29,7 @@ export function useChat(workspaceId?: string) {
   const activeSession = sessions.find((s) => s.id === activeSessionId);
 
   const sendMessage = useCallback(
-    async (content: string, connectionId: string, mode: 'quick' | 'deep' = 'quick') => {
+    async (content: string, connectionId: string, mode: 'quick' | 'deep' = 'quick', customerScope: string = '', customerScopeName: string = '') => {
       setIsLoading(true);
 
       // Read fresh state at call time
@@ -60,7 +61,16 @@ export function useChat(workspaceId?: string) {
       addMessage(sessionId, assistantMessage);
 
       // ── Backend mode ──
+      let requestFailed = false;
       try {
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+        }
+
+        const currentSessionId = sessionId;
+        const es = createEventSource(currentSessionId);
+        eventSourceRef.current = es;
+
         // Build condensed conversation history for the agent
         const currentState = useChatStore.getState();
         const currentSession = currentState.sessions.find((s) => s.id === sessionId);
@@ -84,17 +94,6 @@ export function useChat(workspaceId?: string) {
             }
           }
         }
-
-        const result = await apiSendMessage(sessionId, content, connectionId, mode, workspaceId || '', history);
-        const confirmedSessionId = result.session_id || sessionId;
-
-        if (eventSourceRef.current) {
-          eventSourceRef.current.close();
-        }
-        const es = createEventSource(confirmedSessionId);
-        eventSourceRef.current = es;
-
-        const currentSessionId = confirmedSessionId;
 
         const handleEvent = (eventType: string) => (event: MessageEvent) => {
           let parsed: Record<string, unknown>;
@@ -138,6 +137,17 @@ export function useChat(workspaceId?: string) {
         es.addEventListener('api_call_start', handleEvent('api_call_start'));
         es.addEventListener('api_call_result', handleEvent('api_call_result'));
         es.addEventListener('consolidating', handleEvent('consolidating'));
+        es.addEventListener('narrative_chunk', (event: MessageEvent) => {
+          try {
+            const parsed = JSON.parse(event.data);
+            const token = parsed.token as string;
+            if (token) {
+              appendNarrativeChunk(currentSessionId, assistantMessageId, token);
+            }
+          } catch {
+            // ignore malformed chunks
+          }
+        });
         es.addEventListener('chart_selected', handleEvent('chart_selected'));
         es.addEventListener('clarification', (event: MessageEvent) => {
           try {
@@ -183,10 +193,15 @@ export function useChat(workspaceId?: string) {
           setMessageStreaming(currentSessionId, assistantMessageId, false);
           setIsLoading(false);
           es.close();
-          eventSourceRef.current = null;
+          if (eventSourceRef.current === es) {
+            eventSourceRef.current = null;
+          }
         });
 
         es.onerror = () => {
+          if (requestFailed) {
+            return;
+          }
           addStep(currentSessionId, assistantMessageId, {
             type: 'error',
             content: 'Connection to server lost',
@@ -196,9 +211,18 @@ export function useChat(workspaceId?: string) {
           setMessageStreaming(currentSessionId, assistantMessageId, false);
           setIsLoading(false);
           es.close();
-          eventSourceRef.current = null;
+          if (eventSourceRef.current === es) {
+            eventSourceRef.current = null;
+          }
         };
+
+        await apiSendMessage(sessionId, content, connectionId, mode, workspaceId || '', history, customerScope, customerScopeName);
       } catch (error) {
+        requestFailed = true;
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+          eventSourceRef.current = null;
+        }
         const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
         addStep(sessionId, assistantMessageId, {
           type: 'error',
@@ -210,7 +234,7 @@ export function useChat(workspaceId?: string) {
         setIsLoading(false);
       }
     },
-    [createSession, addMessage, addStep, setInsightResult, setMessageStreaming, workspaceId]
+    [createSession, addMessage, addStep, setInsightResult, setMessageStreaming, appendNarrativeChunk, workspaceId]
   );
 
   return {

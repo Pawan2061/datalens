@@ -128,6 +128,7 @@ class WorkspaceDoc(BaseModel):
     icon: str = "bar-chart-3"
     connection_ids: list[str] = []
     connections: list[dict] = []
+    scope_customers: list[dict] = []  # [{id, code, name}] — loaded once on connection setup
     members: list[dict] = []  # list of WorkspaceMember dicts (emails with access)
     api_tools: list[dict] = []  # list of ApiToolConfig dicts
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -149,6 +150,7 @@ class WorkspaceUpdateRequest(BaseModel):
     icon: Optional[str] = None
     connections: Optional[list[dict]] = None
     connection_ids: Optional[list[str]] = None
+    scope_customers: Optional[list[dict]] = None
 
 
 class SessionDoc(BaseModel):

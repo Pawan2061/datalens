@@ -22,6 +22,8 @@ class ChatRequest(BaseModel):
     analysis_mode: Literal["quick", "deep"] = "quick"
     workspace_id: str = ""
     user_id: str = ""  # for quota checking (set by frontend or auth middleware)
+    customer_scope: str = ""       # customer_id to filter all queries; empty = admin (no filter)
+    customer_scope_name: str = ""  # human-readable name shown in "Viewing as" dropdown
     history: list[HistoryMessage] = Field(default_factory=list)
 
 

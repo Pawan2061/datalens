@@ -73,6 +73,22 @@ class ProfileUpdateQuestionsRequest(BaseModel):
     suggested_questions: list[str] = []
 
 
+class TableInsightUpdate(BaseModel):
+    name: str
+    business_summary: str = ""
+    analysis_angles: list[str] = []
+
+
+class ProfileUpdateRequest(BaseModel):
+    connection_id: str
+    executive_summary: str = ""
+    data_architecture: str = ""
+    cross_table_insights: list[str] = []
+    suggested_questions: list[str] = []
+    directional_plan: list[DirectionalQuestion] = []
+    tables: list[TableInsightUpdate] = []
+
+
 class ProfileGenerateRequest(BaseModel):
     connection_id: str
 

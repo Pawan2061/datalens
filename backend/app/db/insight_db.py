@@ -17,7 +17,7 @@ from app.config import settings
 # psycopg3 deserializes them automatically on read.
 # ---------------------------------------------------------------------------
 _JSONB_COLS: dict[str, set[str]] = {
-    "workspaces": {"connection_ids", "connections", "members", "api_tools"},
+    "workspaces": {"connection_ids", "connections", "members", "api_tools", "scope_customers"},
     "sessions": {"messages"},
     "canvas_states": {"blocks"},
     "connections": {"config"},
@@ -60,12 +60,14 @@ CREATE TABLE IF NOT EXISTS workspaces (
     icon TEXT NOT NULL DEFAULT '',
     connection_ids JSONB NOT NULL DEFAULT '[]',
     connections JSONB NOT NULL DEFAULT '[]',
+    scope_customers JSONB NOT NULL DEFAULT '[]',
     members JSONB NOT NULL DEFAULT '[]',
     api_tools JSONB NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL DEFAULT '',
     last_active_at TEXT NOT NULL DEFAULT ''
 );
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS scope_customers JSONB NOT NULL DEFAULT '[]';
 CREATE INDEX IF NOT EXISTS idx_workspaces_owner_id ON workspaces (owner_id);
 
 CREATE TABLE IF NOT EXISTS sessions (

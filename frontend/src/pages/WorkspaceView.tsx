@@ -16,7 +16,7 @@ import ConfirmDialog from '../components/common/ConfirmDialog';
 import MetricsBar from '../components/workspace/MetricsBar';
 import type { ConnectionInfo } from '../types/connection';
 import type { InsightResult } from '../types/chat';
-import { refreshQuery } from '../services/api';
+import { refreshQuery, fetchCustomers } from '../services/api';
 
 export default function WorkspaceView() {
   const { workspaceId } = useParams<{ workspaceId: string }>();
@@ -24,6 +24,7 @@ export default function WorkspaceView() {
   const workspace = useWorkspaceStore((s) => s.workspaces.find((w) => w.id === workspaceId));
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
   const addConnectionToWorkspace = useWorkspaceStore((s) => s.addConnectionToWorkspace);
+  const setScopeCustomers = useWorkspaceStore((s) => s.setScopeCustomers);
   const addBlocksFromInsight = useCanvasStore((s) => s.addBlocksFromInsight);
   const replaceBlocksByMessageId = useCanvasStore((s) => s.replaceBlocksByMessageId);
   const renameSession = useChatStore((s) => s.renameSession);
@@ -47,6 +48,8 @@ export default function WorkspaceView() {
   const [showConnectionDialog, setShowConnectionDialog] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [customerScope, setCustomerScope] = useState('');
+  const [customerScopeName, setCustomerScopeName] = useState('');
 
   useEffect(() => {
     if (workspaceId) setActiveWorkspace(workspaceId);
@@ -55,6 +58,27 @@ export default function WorkspaceView() {
   useEffect(() => {
     if (!workspace) navigate('/');
   }, [workspace, navigate]);
+
+  // Bootstrap: if workspace has a connection but no scope customers yet, fetch once
+  useEffect(() => {
+    if (!workspaceId || !activeConnectionId) return;
+    if (workspace?.scopeCustomers?.length) {
+      console.log('[scope] customers already loaded from store:', workspace.scopeCustomers.length);
+      return;
+    }
+    console.log('[scope] fetching customers for connection:', activeConnectionId);
+    fetchCustomers(activeConnectionId)
+      .then((res) => {
+        console.log('[scope] fetch result:', res);
+        if (res.customers.length > 0) {
+          setScopeCustomers(workspaceId, res.customers);
+          console.log('[scope] saved', res.customers.length, 'customers to workspace');
+        } else {
+          console.warn('[scope] fetch returned 0 customers. error:', res.error);
+        }
+      })
+      .catch((err) => console.error('[scope] fetch error:', err));
+  }, [workspaceId, activeConnectionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-restore saved connections on workspace load + validate with backend
   useEffect(() => {
@@ -86,12 +110,17 @@ export default function WorkspaceView() {
 
   const hasConnection = activeConnectionId !== null;
 
+  const handleScopeChange = useCallback((id: string, name: string) => {
+    setCustomerScope(id);
+    setCustomerScopeName(name);
+  }, []);
+
   const handleSend = useCallback(
     (message: string, mode: 'quick' | 'deep' = 'quick') => {
       const connId = activeConnectionId || '';
-      sendMessage(message, connId, mode);
+      sendMessage(message, connId, mode, customerScope, customerScopeName);
     },
-    [sendMessage, activeConnectionId]
+    [sendMessage, activeConnectionId, customerScope]
   );
 
   const handleFollowUp = useCallback(
@@ -206,10 +235,20 @@ export default function WorkspaceView() {
   const handleConnect = useCallback((connection: ConnectionInfo) => {
     if (workspaceId) {
       addConnectionToWorkspace(workspaceId, connection);
+      // Fetch and persist customer list for this workspace (one-time per connection setup)
+      if (!workspace?.scopeCustomers?.length) {
+        fetchCustomers(connection.id)
+          .then((res) => {
+            if (res.customers.length > 0 && workspaceId) {
+              setScopeCustomers(workspaceId, res.customers);
+            }
+          })
+          .catch(() => {});
+      }
     }
     setConnections((prev) => [...prev, connection]);
     setActiveConnectionId(connection.id);
-  }, [workspaceId, addConnectionToWorkspace]);
+  }, [workspaceId, addConnectionToWorkspace, setScopeCustomers, workspace?.scopeCustomers?.length]);
 
   const handleSelectConnection = useCallback((id: string) => {
     setActiveConnectionId(id);
@@ -307,6 +346,10 @@ export default function WorkspaceView() {
                 session={activeSession}
                 isLoading={isLoading}
                 hasConnection={hasConnection}
+                scopeCustomers={workspace?.scopeCustomers || []}
+                customerScope={customerScope}
+                customerScopeName={customerScopeName}
+                onScopeChange={handleScopeChange}
                 onSend={handleSend}
                 onFollowUp={handleFollowUp}
                 onPushToCanvas={handlePushToCanvas}

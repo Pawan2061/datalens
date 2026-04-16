@@ -25,7 +25,9 @@ export async function sendMessage(
   connectionId: string,
   analysisMode: 'quick' | 'deep' = 'quick',
   workspaceId: string = '',
-  history: HistoryMessage[] = []
+  history: HistoryMessage[] = [],
+  customerScope: string = '',
+  customerScopeName: string = ''
 ): Promise<{ session_id: string; status: string }> {
   const response = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',
@@ -36,6 +38,8 @@ export async function sendMessage(
       connection_id: connectionId,
       analysis_mode: analysisMode,
       workspace_id: workspaceId,
+      customer_scope: customerScope,
+      customer_scope_name: customerScopeName,
       history,
       user_id: (() => { try { const a = JSON.parse(localStorage.getItem('datalens-auth') || '{}'); return a?.state?.user?.id || ''; } catch { return ''; } })(),
     }),
@@ -72,18 +76,18 @@ export function refreshQuery(
   return new Promise(async (resolve, reject) => {
     const tempSessionId = `__refresh_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     let settled = false;
+    let requestFailed = false;
+    const es = createEventSource(tempSessionId);
 
     const timeout = setTimeout(() => {
       if (!settled) {
         settled = true;
+        es.close();
         reject(new Error('Refresh timed out'));
       }
     }, 120000);
 
     try {
-      await sendMessage(tempSessionId, question, connectionId, mode);
-      const es = createEventSource(tempSessionId);
-
       es.addEventListener('final_result', (event: MessageEvent) => {
         if (settled) return;
         try {
@@ -108,6 +112,9 @@ export function refreshQuery(
       });
 
       es.onerror = () => {
+        if (requestFailed) {
+          return;
+        }
         es.close();
         if (!settled) {
           settled = true;
@@ -115,7 +122,11 @@ export function refreshQuery(
           reject(new Error('Connection lost during refresh'));
         }
       };
+
+      await sendMessage(tempSessionId, question, connectionId, mode);
     } catch (err) {
+      requestFailed = true;
+      es.close();
       if (!settled) {
         settled = true;
         clearTimeout(timeout);
@@ -399,6 +410,47 @@ export async function updateProfileQuestions(
   return response.json();
 }
 
+export async function updateProfile(
+  workspaceId: string,
+  connectionId: string,
+  profile: {
+    executive_summary: string;
+    data_architecture: string;
+    cross_table_insights: string[];
+    suggested_questions: string[];
+    directional_plan: Array<{
+      title: string;
+      question: string;
+      narrative: string;
+      query_template: string;
+      tables: string[];
+      key_columns: string[];
+    }>;
+    tables: Array<{
+      name: string;
+      business_summary: string;
+      analysis_angles: string[];
+    }>;
+  },
+): Promise<{ status: string }> {
+  const response = await fetch(
+    `${API_BASE}/api/workspaces/${workspaceId}/profile`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({
+        connection_id: connectionId,
+        ...profile,
+      }),
+    }
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Failed to update profile' }));
+    throw new Error(err.detail || 'Failed to update profile');
+  }
+  return response.json();
+}
+
 export async function deleteProfile(
   workspaceId: string,
   connectionId: string
@@ -503,6 +555,35 @@ export async function testApiTool(
   if (!response.ok) {
     const err = await response.json().catch(() => ({ detail: 'Test failed' }));
     throw new Error(err.detail || 'API test failed');
+  }
+  return response.json();
+}
+
+// ── Customer scope ────────────────────────────────────────────────
+
+export interface CustomerRecord {
+  id: string;
+  code: string;
+  name: string;
+}
+
+export async function fetchCustomers(
+  connectionId: string,
+  table?: string,
+  idCol?: string,
+  nameCol?: string,
+  codeCol?: string,
+): Promise<{ customers: CustomerRecord[]; error?: string }> {
+  const params = new URLSearchParams({ connection_id: connectionId });
+  if (table)   params.set('table', table);
+  if (idCol)   params.set('id_col', idCol);
+  if (nameCol) params.set('name_col', nameCol);
+  if (codeCol) params.set('code_col', codeCol);
+
+  const response = await fetch(`${API_BASE}/api/scope/customers?${params}`);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Failed' }));
+    throw new Error(err.detail || 'Failed to fetch customers');
   }
   return response.json();
 }

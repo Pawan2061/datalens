@@ -1,0 +1,22 @@
+services:
+  backend:
+    build: ./backend
+    container_name: datalens-api
+    ports:
+      - "8080:8080"
+    env_file:
+      - backend/.env
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8080}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+    container_name: datalens-app
+    ports:
+      - "3000:8080"
+    depends_on:
+      - backend
+    restart: unless-stopped

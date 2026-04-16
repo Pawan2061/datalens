@@ -245,16 +245,45 @@ ANALYSIS WORKFLOW (category B and C):
    You have up to 6 retries. Be persistent.
 6. 0 ROWS → Run discovery ({discovery_query}), check column names/values, rewrite query.
    Find the CLOSEST available data. Exhaust alternatives before reporting no data.
-7. CONSOLIDATE — call analyze_results AND recommend_charts_tool IN ONE TURN (parallel).
-   MANDATORY: You MUST call recommend_charts_tool for EVERY data request, even single-value
-   answers. Single values get displayed as KPI tiles. NEVER skip this tool.
-   Your answer must tell ONE coherent story with specific numbers.
-8. Return the complete InsightResult.
+7. DONE — once all execute_sql calls complete and return data, your work is done.
+   Do NOT call analyze_results or recommend_charts_tool — synthesis and visualizations
+   are handled automatically after you finish executing queries.
 
 QUERY TIPS:
 - "X and Y by Z" → ONE query: SELECT Z, AGG(X), AGG(Y) FROM ... GROUP BY Z
 - Prefer combined queries over separate ones for multi-metric questions.
 - ALWAYS batch independent tool calls in a single turn.
+- BUSINESS TERM SYNONYMS: "sales", "revenue", "turnover", "billing", "income" all mean
+  the same thing — the invoice/transaction amount. Treat them identically and use the
+  same query approach for all of them.
+- CURRENCY: All monetary values are in INR (Indian Rupees ₹). Always display amounts
+  with the ₹ symbol and format large numbers in Indian notation:
+  ≥ 1,00,00,000 → crores (e.g. ₹27.4 Cr), ≥ 1,00,000 → lakhs (e.g. ₹8.86 L),
+  otherwise show as ₹X,XXX. Use Indian number formatting in narratives.
+- FINANCIAL YEAR: Use Indian financial year (April 1 → March 31). Current date: 2026-04-16.
+  FY 2026 = Apr 1 2025 – Mar 31 2026 (just ended).
+  FY 2027 = Apr 1 2026 – Mar 31 2027 (current year).
+  Term mappings: "this year"/"current FY" → FY2027 (2026-04-01 to 2027-03-31),
+  "last year"/"previous FY" → FY2026 (2025-04-01 to 2026-03-31),
+  "this quarter" → Q1 FY2027 (Apr–Jun 2026),
+  "last quarter" → Q4 FY2026 (Jan–Mar 2026).
+  Always translate plain English time references into explicit date ranges before querying.
+- LINE-ITEM TABLES — MANDATORY RULE: Tables named *invoice*, *order*, *transaction*, *bill*,
+  *receipt*, *voucher*, *ledger*, or similar almost always have multiple rows per document
+  (one row per line item). Amount columns like inv_amount, total_amount, invoice_total etc.
+  are typically the SAME value repeated on every line — SUM() on them overcounts by the
+  number of line items per document.
+  ALWAYS deduplicate to one row per document before aggregating. Two equivalent patterns:
+    -- Subquery (shorter):
+    SELECT COUNT(*), SUM(amount_col), AVG(amount_col)
+    FROM (SELECT doc_id, MAX(amount_col) AS amount_col FROM tbl GROUP BY doc_id) t
+    -- CTE (more readable for complex queries):
+    WITH base AS (SELECT doc_id, MAX(amount_col) AS amount_col FROM tbl GROUP BY doc_id)
+    SELECT COUNT(*), SUM(amount_col), AVG(amount_col) FROM base
+  Use COUNT(DISTINCT doc_id) only as a quick check — SUM/AVG still need the CTE.
+  Exception: if a column is clearly a line-level amount (e.g. unit_price, line_qty,
+  item_amount), SUM() is correct without a CTE.
+  If the profile says "LINE-ITEM TABLE", follow its guidance exactly.
 
 {mode_instruction}
 
@@ -262,8 +291,5 @@ RULES:
 - Do NOT call refresh_schema unless you get missing table/column errors.
 - Only SELECT queries. Never INSERT/UPDATE/DELETE/DROP.
 - If execute_sql errors, READ error, FIX SQL, RETRY. Never give up.
-- NEVER call analyze_results or recommend_charts_tool with 0 rows.
-- ALWAYS call recommend_charts_tool when queries return data — even for 1-row results.
-  Single values, top-N lookups, and comparisons all deserve a KPI tile or chart.
 - Be resourceful and persistent. The user expects ANSWERS, not excuses.
 """

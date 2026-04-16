@@ -5,29 +5,171 @@ import json
 import time
 from typing import AsyncGenerator
 
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
 
 from app.agent.models import AgentEvent, AgentEventType
 from app.agent.prompts import build_system_prompt
 from app.agent.schema_cache import schema_cache
+from app.agent.api_tool_cache import (
+    get_cached_workspace_api_tools,
+    set_cached_workspace_api_tools,
+)
 from app.agent.tools import (
     ask_clarification,
     execute_sql,
-    recommend_charts_tool,
     refresh_schema,
-    analyze_results,
 )
 from app.agent.tools.api_tool_factory import build_workspace_api_tools, describe_api_tools_for_prompt
-from app.llm.openai_llm import get_planner_llm
+from app.llm.openai_llm import get_planner_llm, get_synthesis_llm
 
 
 ALL_TOOLS = [
     refresh_schema,
     ask_clarification,
     execute_sql,
-    analyze_results,
-    recommend_charts_tool,
 ]
+
+# ── Streaming synthesis ───────────────────────────────────────────────
+# Separator between narrative and metadata JSON in the LLM output.
+_STREAM_SEP = "===METADATA==="
+
+_STREAMING_SYNTHESIS_PROMPT = """\
+You are a senior data analyst. Turn SQL query results into executive insights.
+
+CURRENCY & NUMBER FORMATTING (mandatory):
+- All monetary values are in INR (Indian Rupees). Always use ₹ symbol, never $ or USD.
+- Format large numbers in Indian notation:
+  ≥ 1,00,00,000 → crores (e.g. ₹27.4 Cr)
+  ≥ 1,00,000    → lakhs  (e.g. ₹8.86 L)
+  otherwise     → ₹X,XXX
+- Apply this to ALL amounts in both the narrative and key_findings.
+
+OUTPUT — two parts:
+
+PART 1 — NARRATIVE:
+Write a markdown narrative (2-4 paragraphs, or ## sections for multi-part questions).
+Rules:
+- Open with the single most important takeaway in **bold**.
+- Use exact numbers from the data: percentages, totals, averages.
+- Compare values: "Category A is **2.3× larger** than Category B."
+- Highlight surprises or anomalies.
+- End with a brief "so what" — why the reader should care, what action to consider.
+- For multi-part questions (when sub_questions is provided): use ## headers per sub-question,
+  then a final ## Putting It Together section that ties findings together.
+
+Then output this separator on its own line:
+===METADATA===
+
+PART 2 — JSON (after separator, no markdown fences):
+{
+  "title": "Concise punchy title (e.g. 'Revenue Surged 34% — Electronics Leads')",
+  "key_findings": [
+    {"headline": "Short punchy insight (6-10 words)", "detail": "One sentence context", "significance": "high|medium|low"}
+  ],
+  "follow_up_questions": ["Specific drill-down question?"]
+}
+
+Rules: 3-5 key findings, 2-4 follow-up questions. Every number must come from the data.
+Output ONLY the narrative, then the separator, then the JSON. No preamble.
+"""
+
+
+async def _stream_synthesis(
+    question: str,
+    sub_results: list[dict],
+    queue: asyncio.Queue | None,
+    plan: dict | None = None,
+) -> dict | None:
+    """Stream synthesis narrative tokens as SSE events, return full synthesis dict.
+
+    Tokens before ===METADATA=== are emitted as narrative_chunk events so the
+    frontend can display the narrative word-by-word while the LLM generates it.
+    After the separator, the JSON metadata is collected silently.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Only include rows with data
+    clean_results = []
+    for r in sub_results:
+        if r.get("error"):
+            continue
+        clean_results.append({
+            "description": r.get("description", ""),
+            "columns": r.get("columns", []),
+            "data": r.get("data", [])[:50],   # cap rows to avoid huge prompts
+            "row_count": r.get("row_count", 0),
+        })
+
+    if not clean_results:
+        return None
+
+    # Add sub_questions for sectioned narratives (multi-part questions)
+    results_payload: dict = {"results": clean_results}
+    if plan and plan.get("sub_questions"):
+        results_payload["sub_questions"] = [
+            sq["question"] for sq in plan["sub_questions"]
+        ]
+
+    results_json = json.dumps(results_payload, default=str)
+
+    await _emit(queue, AgentEventType.consolidating, {
+        "content": "Synthesizing insights...",
+    })
+
+    try:
+        llm = get_synthesis_llm()
+        messages = [
+            SystemMessage(content=_STREAMING_SYNTHESIS_PROMPT),
+            HumanMessage(content=f"User question: {question}\n\nQuery results:\n{results_json}"),
+        ]
+
+        full_text = ""
+        narrative_done = False
+
+        async for chunk in llm.astream(messages):
+            token = chunk.content
+            if not token:
+                continue
+            full_text += token
+
+            if not narrative_done:
+                if _STREAM_SEP in full_text:
+                    # Separator found — stop emitting tokens
+                    narrative_done = True
+                else:
+                    await _emit(queue, AgentEventType.narrative_chunk, {"token": token})
+
+        # Split on separator
+        if _STREAM_SEP in full_text:
+            parts = full_text.split(_STREAM_SEP, 1)
+            narrative = parts[0].strip()
+            metadata_str = parts[1].strip() if len(parts) > 1 else "{}"
+        else:
+            narrative = full_text.strip()
+            metadata_str = "{}"
+
+        # Strip markdown fences if present
+        if metadata_str.startswith("```"):
+            lines = metadata_str.split("\n")
+            metadata_str = "\n".join(l for l in lines if not l.startswith("```")).strip()
+
+        try:
+            metadata = json.loads(metadata_str)
+        except json.JSONDecodeError:
+            metadata = {}
+
+        return {
+            "title": metadata.get("title", ""),
+            "narrative": narrative,
+            "key_findings": metadata.get("key_findings", []),
+            "follow_up_questions": metadata.get("follow_up_questions", []),
+        }
+
+    except Exception as exc:
+        logger.warning("Streaming synthesis failed (will use heuristic fallback): %s", exc)
+        return None
 
 
 async def run_agent(
@@ -39,6 +181,8 @@ async def run_agent(
     queue: asyncio.Queue | None = None,
     history: list[dict] | None = None,
     user_id: str = "",
+    customer_scope: str = "",
+    customer_scope_name: str = "",
 ) -> AsyncGenerator[AgentEvent, None]:
     """Run the LangGraph ReAct agent and yield SSE events.
 
@@ -79,7 +223,7 @@ async def run_agent(
 
     # ── Chit-chat → cheap model (Haiku) ─────────────────────────────
     from app.agent.quick_responses import is_conversational
-    if is_conversational(question):
+    if is_conversational(question, has_history=bool(history)):
         await _emit(queue, AgentEventType.thinking, {
             "step": "conversational",
             "content": "Processing your message...",
@@ -112,34 +256,49 @@ async def run_agent(
     }
     connector_label = _CONNECTOR_LABELS.get(conn_type, "PostgreSQL")
 
-    # Try to load workspace intelligence profile first
+    # Load workspace profile, API tools, and schema in parallel.
+    # Schema is always fetched speculatively — instant when cached (TTL: 1 hour).
+    # If the workspace profile is available, schema is discarded; otherwise it's
+    # already in hand, saving a sequential round-trip after the profile returns.
     profile_text = ""
     api_tool_configs: list[dict] = []
+    schema_text = ""
+
     if workspace_id:
         from app.agent.profiler import load_profile
-        profile_doc = await load_profile(workspace_id, connection_id)
+
+        async def _load_api_tools() -> list[dict]:
+            cached_tools = get_cached_workspace_api_tools(workspace_id)
+            if cached_tools is not None:
+                return cached_tools
+            try:
+                from app.db.insight_db import insight_db
+                if not insight_db.is_ready:
+                    return []
+                container = insight_db.container("workspaces")
+                items = await asyncio.to_thread(
+                    lambda: list(container.query_items(
+                        query="SELECT c.api_tools FROM c WHERE c.id = @wid",
+                        parameters=[{"name": "@wid", "value": workspace_id}],
+                        partition_key=workspace_id,
+                    ))
+                )
+                tools = items[0]["api_tools"] if items and items[0].get("api_tools") else []
+                set_cached_workspace_api_tools(workspace_id, tools)
+                return tools
+            except Exception:
+                return []  # API tools are optional — don't block analysis
+
+        profile_doc, api_tool_configs, schema_text = await asyncio.gather(
+            load_profile(workspace_id, connection_id),
+            _load_api_tools(),
+            schema_cache.get(connection_id),  # Speculative — free when cached
+        )
         if profile_doc and profile_doc.status == "ready" and profile_doc.profile_text:
             profile_text = profile_doc.profile_text
-
-        # Load workspace API tools
-        try:
-            from app.db.insight_db import insight_db
-            if insight_db.is_ready:
-                container = insight_db.container("workspaces")
-                # Cross-partition query since we don't know owner_id
-                items = list(container.query_items(
-                    query="SELECT c.api_tools FROM c WHERE c.id = @wid",
-                    parameters=[{"name": "@wid", "value": workspace_id}],
-                    enable_cross_partition_query=True,
-                ))
-                if items and items[0].get("api_tools"):
-                    api_tool_configs = items[0]["api_tools"]
-        except Exception:
-            pass  # API tools are optional — don't block analysis
-
-    # Fall back to raw schema if no profile
-    schema_text = ""
-    if not profile_text:
+            schema_text = ""  # Profile takes precedence — discard preloaded schema
+    else:
+        # No workspace context — load schema directly
         schema_text = await schema_cache.get(connection_id)
 
     # Build system prompt
@@ -163,6 +322,7 @@ async def run_agent(
     })
 
     plan_addendum = ""
+    plan: dict | None = None
     try:
         from app.agent.pre_planner import pre_plan, format_plan_for_agent
         schema_for_plan = profile_text or schema_text
@@ -176,24 +336,40 @@ async def run_agent(
     except Exception:
         pass  # Pre-planner is optional — if it fails, agent proceeds normally
 
+    # ── Customer scope filter (injected when not admin) ─────────────
+    scope_addendum = ""
+    if customer_scope:
+        display_name = customer_scope_name or customer_scope
+        scope_addendum = (
+            f"\n\n━━ CUSTOMER SCOPE FILTER ━━\n"
+            f"You are operating in CUSTOMER mode. The user is viewing as: {display_name}.\n"
+            f"customer_id = {customer_scope}\n"
+            f"CRITICAL: Every SQL query MUST include a WHERE clause (or equivalent filter) "
+            f"that restricts results to this customer_id = {customer_scope}.\n"
+            f"If a table does not have a customer_id column, join it to the relevant table "
+            f"that does. NEVER return data for other customers.\n"
+            f"IMPORTANT: The customer context is already set to '{display_name}'. "
+            f"Do NOT ask the user which customer they mean — all questions refer to this customer.\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        )
+    else:
+        scope_addendum = (
+            f"\n\n━━ ADMIN MODE ━━\n"
+            f"You are operating in ADMIN mode — unrestricted view across ALL customers.\n"
+            f"Do NOT apply any customer_id filter. Return data for all customers unless "
+            f"the user explicitly names a specific one in their current message.\n"
+            f"Ignore any customer scope references from prior conversation turns.\n"
+            f"━━━━━━━━━━━━━━━━\n"
+        )
+
     # Append the execution roadmap to the system prompt
-    agent_prompt = system_prompt + plan_addendum
+    agent_prompt = system_prompt + scope_addendum + plan_addendum
 
     # Create the ReAct agent graph
     # Quick mode → Haiku (tool calling). Deep mode → Sonnet (thorough).
     # Exception: complex plans get Sonnet even in quick mode (Haiku can't handle 3+ step plans)
     from app.llm.openai_llm import get_agent_llm
-    plan_complexity = ""
-    if plan_addendum:
-        try:
-            from app.agent.pre_planner import pre_plan  # noqa: already imported above
-            # Extract complexity from the plan_addendum string
-            for line in plan_addendum.split("\n"):
-                if line.strip().startswith("Complexity:"):
-                    plan_complexity = line.split(":", 1)[1].strip().lower()
-                    break
-        except Exception:
-            pass
+    plan_complexity = plan.get("complexity", "").lower() if plan else ""
 
     use_strong_model = (
         analysis_mode == "deep"
@@ -298,29 +474,6 @@ async def run_agent(
                         })
                         sub_query_index += 1
 
-                    elif tool_name == "analyze_results":
-                        # Capture the synthesis output for the final result
-                        try:
-                            synthesis_output = json.loads(content)
-                        except json.JSONDecodeError:
-                            synthesis_output = None
-                        await _emit(queue, AgentEventType.consolidating, {
-                            "content": "Synthesizing insights from query results...",
-                        })
-
-                    elif tool_name == "recommend_charts_tool":
-                        try:
-                            charts = json.loads(content)
-                            agent_chart_recs = charts  # Capture for final result
-                            for chart in charts:
-                                await _emit(queue, AgentEventType.chart_selected, {
-                                    "chart_type": chart.get("chart_type", "table"),
-                                    "title": chart.get("title", ""),
-                                    "reasoning": chart.get("reasoning", ""),
-                                })
-                        except json.JSONDecodeError:
-                            pass
-
                     elif tool_name == "refresh_schema":
                         await _emit(queue, AgentEventType.thinking, {
                             "step": "schema_refresh",
@@ -402,16 +555,6 @@ async def run_agent(
                                     "sql": tc_sql,
                                 })
                                 query_start_index += 1
-                        elif tc_name == "analyze_results":
-                            await _emit(queue, AgentEventType.thinking, {
-                                "step": "synthesizing",
-                                "content": "Pulling insights together from the results...",
-                            })
-                        elif tc_name == "recommend_charts_tool":
-                            await _emit(queue, AgentEventType.thinking, {
-                                "step": "charting",
-                                "content": "Choosing the best visualizations...",
-                            })
                         elif tc_name in dynamic_tool_names:
                             await _emit(queue, AgentEventType.api_call_start, {
                                 "api_name": tc_name,
@@ -474,6 +617,17 @@ async def run_agent(
             await _emit_done(queue)
             return
         # Fall through to build partial results from whatever we collected
+
+    # ── Streaming synthesis (runs after the agent finishes all SQL) ──
+    # analyze_results is no longer an agent tool — synthesis runs here so
+    # we can stream the narrative token-by-token before the final result.
+    if all_sub_results and not synthesis_output:
+        try:
+            synthesis_output = await _stream_synthesis(
+                question, all_sub_results, queue, plan=plan
+            )
+        except Exception:
+            pass  # Synthesis failure → heuristic fallback in _build_final_result
 
     # ── Build final result ───────────────────────────────────────────
     total_duration = (time.perf_counter() - start_time) * 1000

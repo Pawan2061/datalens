@@ -11,11 +11,18 @@ from app.agent.profiler import (
     generate_workspace_profile,
     load_profile,
     delete_profile,
+    _format_profile_text,
 )
 from app.api.routes.users import get_current_user
 from app.db.connection_manager import connection_manager
 from app.db.insight_db import insight_db
-from app.schemas.profile import ProfileGenerateRequest, ProfileStatusResponse, ProfileUpdateQuestionsRequest
+from app.schemas.profile import (
+    DataProfile,
+    ProfileGenerateRequest,
+    ProfileStatusResponse,
+    ProfileUpdateQuestionsRequest,
+    ProfileUpdateRequest,
+)
 
 router = APIRouter()
 
@@ -218,27 +225,47 @@ async def update_profile_questions(
             detail=f"Profile not found for workspace={workspace_id} connection={body.connection_id}",
         )
 
-    # Update the raw_profile's directional_plan and suggested_questions
-    raw = doc.raw_profile or {}
-    raw["directional_plan"] = [q.model_dump() for q in body.directional_plan]
-    raw["suggested_questions"] = body.suggested_questions
-
-    # Persist to Cosmos DB
-    container = insight_db.container("workspace_profiles")
-    profile_id = f"profile-{body.connection_id}"
-    try:
-        cosmos_doc = container.read_item(item=profile_id, partition_key=workspace_id)
-    except Exception as e:
-        logger.warning("Cosmos read_item failed: %s", e)
-        raise HTTPException(
-            status_code=404,
-            detail=f"Profile document not found in Cosmos: {profile_id} / {workspace_id}",
-        )
-
-    cosmos_doc["raw_profile"] = raw
-    container.upsert_item(cosmos_doc)
+    await _persist_profile_updates(
+        workspace_id=workspace_id,
+        connection_id=body.connection_id,
+        profile_updates={
+            "directional_plan": [q.model_dump() for q in body.directional_plan],
+            "suggested_questions": body.suggested_questions,
+        },
+    )
 
     return {"status": "updated", "questions_count": len(body.directional_plan)}
+
+
+@router.put("/api/workspaces/{workspace_id}/profile")
+async def update_profile(
+    workspace_id: str,
+    body: ProfileUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Update editable profile insight sections while keeping structural data intact."""
+    table_updates = {
+        table.name: {
+            "business_summary": table.business_summary,
+            "analysis_angles": table.analysis_angles,
+        }
+        for table in body.tables
+    }
+
+    await _persist_profile_updates(
+        workspace_id=workspace_id,
+        connection_id=body.connection_id,
+        profile_updates={
+            "executive_summary": body.executive_summary,
+            "data_architecture": body.data_architecture,
+            "cross_table_insights": body.cross_table_insights,
+            "suggested_questions": body.suggested_questions,
+            "directional_plan": [q.model_dump() for q in body.directional_plan],
+        },
+        table_updates=table_updates,
+    )
+
+    return {"status": "updated"}
 
 
 @router.delete("/api/workspaces/{workspace_id}/profile")
@@ -256,3 +283,50 @@ async def remove_profile(
         raise HTTPException(status_code=404, detail="Profile not found")
 
     return {"status": "deleted"}
+
+
+async def _persist_profile_updates(
+    workspace_id: str,
+    connection_id: str,
+    profile_updates: dict,
+    table_updates: dict[str, dict] | None = None,
+) -> None:
+    doc = await load_profile(workspace_id, connection_id)
+    if doc is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Profile not found for workspace={workspace_id} connection={connection_id}",
+        )
+
+    raw = dict(doc.raw_profile or {})
+    raw.update(profile_updates)
+
+    if table_updates:
+        updated_tables = []
+        for table in raw.get("tables", []):
+            table_copy = dict(table)
+            update = table_updates.get(table_copy.get("name", ""))
+            if update:
+                table_copy["business_summary"] = update["business_summary"]
+                table_copy["analysis_angles"] = update["analysis_angles"]
+            updated_tables.append(table_copy)
+        raw["tables"] = updated_tables
+
+    try:
+        normalized_profile = DataProfile(**raw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid profile update payload: {exc}") from exc
+
+    container = insight_db.container("workspace_profiles")
+    profile_id = f"profile-{connection_id}"
+    try:
+        stored_doc = container.read_item(item=profile_id, partition_key=workspace_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Profile document not found: {profile_id} / {workspace_id}",
+        ) from exc
+
+    stored_doc["raw_profile"] = normalized_profile.model_dump()
+    stored_doc["profile_text"] = _format_profile_text(normalized_profile, doc.connector_type or "database")
+    container.upsert_item(stored_doc)
