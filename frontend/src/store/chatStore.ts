@@ -36,6 +36,7 @@ interface ChatState {
   addStep: (sessionId: string, messageId: string, step: AgentStep) => void;
   setInsightResult: (sessionId: string, messageId: string, result: InsightResult) => void;
   setMessageStreaming: (sessionId: string, messageId: string, streaming: boolean) => void;
+  appendNarrativeChunk: (sessionId: string, messageId: string, token: string) => void;
   renameSession: (sessionId: string, title: string) => void;
   deleteSession: (sessionId: string) => void;
   deleteMessage: (sessionId: string, messageId: string) => void;
@@ -136,6 +137,21 @@ export const useChatStore = create<ChatState>()(
         if (!streaming) {
           debouncedSaveSession(sessionId, 1500);
         }
+      },
+
+      appendNarrativeChunk: (sessionId: string, messageId: string, token: string) => {
+        set((state) => ({
+          sessions: state.sessions.map((session) => {
+            if (session.id !== sessionId) return session;
+            return {
+              ...session,
+              messages: session.messages.map((msg) => {
+                if (msg.id !== messageId) return msg;
+                return { ...msg, streamingNarrative: (msg.streamingNarrative ?? '') + token };
+              }),
+            };
+          }),
+        }));
       },
 
       renameSession: (sessionId: string, title: string) => {

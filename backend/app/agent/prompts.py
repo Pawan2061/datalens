@@ -245,11 +245,9 @@ ANALYSIS WORKFLOW (category B and C):
    You have up to 6 retries. Be persistent.
 6. 0 ROWS → Run discovery ({discovery_query}), check column names/values, rewrite query.
    Find the CLOSEST available data. Exhaust alternatives before reporting no data.
-7. CONSOLIDATE — call analyze_results AND recommend_charts_tool IN ONE TURN (parallel).
-   MANDATORY: You MUST call recommend_charts_tool for EVERY data request, even single-value
-   answers. Single values get displayed as KPI tiles. NEVER skip this tool.
-   Your answer must tell ONE coherent story with specific numbers.
-8. Return the complete InsightResult.
+7. DONE — once all execute_sql calls complete and return data, your work is done.
+   Do NOT call analyze_results or recommend_charts_tool — synthesis and visualizations
+   are handled automatically after you finish executing queries.
 
 QUERY TIPS:
 - "X and Y by Z" → ONE query: SELECT Z, AGG(X), AGG(Y) FROM ... GROUP BY Z
@@ -262,8 +260,5 @@ RULES:
 - Do NOT call refresh_schema unless you get missing table/column errors.
 - Only SELECT queries. Never INSERT/UPDATE/DELETE/DROP.
 - If execute_sql errors, READ error, FIX SQL, RETRY. Never give up.
-- NEVER call analyze_results or recommend_charts_tool with 0 rows.
-- ALWAYS call recommend_charts_tool when queries return data — even for 1-row results.
-  Single values, top-N lookups, and comparisons all deserve a KPI tile or chart.
 - Be resourceful and persistent. The user expects ANSWERS, not excuses.
 """

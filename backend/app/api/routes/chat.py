@@ -46,24 +46,71 @@ async def chat(request: ChatRequest):
             detail=f"Request blocked: {layer1.reason}",
         )
 
-    # ── Guardrail Layer 2: LLM classifier (async, Gemini Flash) ──
-    if layer1.verdict != Verdict.FLAG:
-        # If Layer 1 already flagged, skip LLM check to save time
+    # ── L2 classifier + quota check run in parallel ───────────────
+    # Both are I/O-bound and independent — running them concurrently
+    # cuts ~600-1700 ms from the synchronous baseline.
+
+    async def _run_layer2():
+        """Run the LLM security classifier (Layer 2). Returns GuardrailResult."""
+        if layer1.verdict == Verdict.FLAG:
+            # Already flagged by L1 — skip the redundant LLM call
+            return layer1
         try:
             from app.guardrails.llm_classifier import classify_input
-            layer2 = await classify_input(request.message)
-            if layer2.verdict == Verdict.BLOCK:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Request blocked: {layer2.reason}",
+            return await classify_input(request.message)
+        except Exception:
+            # Classifier failure → fail open (never block a legitimate user)
+            return layer1
+
+    async def _fetch_user_doc() -> "dict | None":
+        """Fetch user document from DB for quota check. Returns None on miss/error."""
+        if not request.user_id:
+            return None
+        try:
+            from app.db.insight_db import insight_db
+            if not insight_db.is_ready:
+                return None
+            users = insight_db.container("users")
+            query = "SELECT * FROM c WHERE c.id = @id"
+            params = [{"name": "@id", "value": request.user_id}]
+            # query_items is a blocking iterator — run it off the event loop
+            results = await asyncio.to_thread(
+                lambda: list(
+                    users.query_items(
+                        query=query,
+                        parameters=params,
+                        enable_cross_partition_query=True,
+                    )
                 )
-            # Merge flag status
-            if layer2.verdict == Verdict.FLAG:
-                layer1 = layer2
+            )
+            return results[0] if results else None
+        except Exception:
+            return None  # Don't block chat if user lookup fails
+
+    layer2, user_doc = await asyncio.gather(_run_layer2(), _fetch_user_doc())
+
+    # ── Enforce L2 verdict ────────────────────────────────────────
+    if layer2.verdict == Verdict.BLOCK:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Request blocked: {layer2.reason}",
+        )
+
+    # ── Enforce quota (user doc was fetched in parallel above) ────
+    if user_doc:
+        try:
+            from app.auth.quota import check_quota
+            quota = await check_quota(user_doc)
+            if not quota.allowed:
+                raise HTTPException(status_code=429, detail=quota.reason)
         except HTTPException:
             raise
         except Exception:
-            pass  # Classifier failure = fail open
+            pass  # Don't block chat if quota check fails
+
+    # Merge flag status from whichever layer fired
+    if layer2.verdict == Verdict.FLAG:
+        layer1 = layer2
 
     # Log flagged requests for audit
     if layer1.verdict == Verdict.FLAG:
@@ -72,36 +119,6 @@ async def chat(request: ChatRequest):
             "FLAGGED request from user=%s: reason=%s | message=%s",
             request.user_id, layer1.reason, request.message[:200],
         )
-
-    # ── Quota check (if user_id provided) ─────────────────────────
-    user_doc: dict | None = None
-    if request.user_id:
-        try:
-            from app.db.insight_db import insight_db
-            if insight_db.is_ready:
-                users = insight_db.container("users")
-                query = "SELECT * FROM c WHERE c.id = @id"
-                params = [{"name": "@id", "value": request.user_id}]
-                results = list(
-                    users.query_items(
-                        query=query,
-                        parameters=params,
-                        enable_cross_partition_query=True,
-                    )
-                )
-                if results:
-                    user_doc = results[0]
-                    from app.auth.quota import check_quota
-                    quota = await check_quota(user_doc)
-                    if not quota.allowed:
-                        raise HTTPException(
-                            status_code=429,
-                            detail=quota.reason,
-                        )
-        except HTTPException:
-            raise
-        except Exception:
-            pass  # Don't block chat if quota check fails
 
     queue: asyncio.Queue = asyncio.Queue()
     _event_queues[session_id] = queue

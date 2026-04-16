@@ -72,6 +72,7 @@ export interface ChatMessage {
   steps: AgentStep[];
   insightResult?: InsightResult;
   isStreaming?: boolean;
+  streamingNarrative?: string;
   analysisMode?: 'quick' | 'deep';
   feedback?: 'positive' | 'negative' | null;
 }

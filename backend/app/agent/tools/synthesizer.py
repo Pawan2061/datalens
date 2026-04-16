@@ -5,7 +5,7 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 
-from app.llm.openai_llm import get_worker_llm
+from app.llm.openai_llm import get_synthesis_llm
 
 _SYNTHESIS_PROMPT = """\
 You are a senior data analyst at a top consulting firm. Your job is to turn raw SQL \
@@ -86,7 +86,7 @@ async def analyze_results(question: str, results_json: str) -> str:
     Returns:
         JSON string with title, narrative, key_findings, and follow_up_questions.
     """
-    llm = get_worker_llm()
+    llm = get_synthesis_llm()
     messages = [
         SystemMessage(content=_SYNTHESIS_PROMPT),
         HumanMessage(

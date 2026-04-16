@@ -1419,6 +1419,22 @@ body {
   margin-left: 6px;
 }
 
+/* Streaming narrative — shown while synthesis LLM is generating */
+.chat-streaming-narrative {
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: #f8f9ff;
+  border: 1px solid #e0e7ff;
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: #1e293b;
+}
+.chat-streaming-narrative p { margin: 0 0 10px; }
+.chat-streaming-narrative p:last-child { margin-bottom: 0; }
+.chat-streaming-narrative h2 { font-size: 15px; font-weight: 600; margin: 14px 0 6px; color: #1e40af; }
+.chat-streaming-narrative strong { font-weight: 600; color: #0f172a; }
+
 /* Compact insight preview */
 .chat-compact-preview {
   background: linear-gradient(135deg, #fff 0%, #fafaff 100%);

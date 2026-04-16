@@ -20,6 +20,7 @@ export function useChat(workspaceId?: string) {
   const addStep = useChatStore((s) => s.addStep);
   const setInsightResult = useChatStore((s) => s.setInsightResult);
   const setMessageStreaming = useChatStore((s) => s.setMessageStreaming);
+  const appendNarrativeChunk = useChatStore((s) => s.appendNarrativeChunk);
   const setActiveSession = useChatStore((s) => s.setActiveSession);
 
   const [isLoading, setIsLoading] = useState(false);
@@ -138,6 +139,17 @@ export function useChat(workspaceId?: string) {
         es.addEventListener('api_call_start', handleEvent('api_call_start'));
         es.addEventListener('api_call_result', handleEvent('api_call_result'));
         es.addEventListener('consolidating', handleEvent('consolidating'));
+        es.addEventListener('narrative_chunk', (event: MessageEvent) => {
+          try {
+            const parsed = JSON.parse(event.data);
+            const token = parsed.token as string;
+            if (token) {
+              appendNarrativeChunk(currentSessionId, assistantMessageId, token);
+            }
+          } catch {
+            // ignore malformed chunks
+          }
+        });
         es.addEventListener('chart_selected', handleEvent('chart_selected'));
         es.addEventListener('clarification', (event: MessageEvent) => {
           try {
@@ -210,7 +222,7 @@ export function useChat(workspaceId?: string) {
         setIsLoading(false);
       }
     },
-    [createSession, addMessage, addStep, setInsightResult, setMessageStreaming, workspaceId]
+    [createSession, addMessage, addStep, setInsightResult, setMessageStreaming, appendNarrativeChunk, workspaceId]
   );
 
   return {

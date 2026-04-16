@@ -11,9 +11,41 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.llm.openai_llm import get_generation_llm
+from app.llm.openai_llm import get_synthesis_llm
 
 logger = logging.getLogger(__name__)
+
+# Keywords that signal a question likely needs multi-step decomposition.
+# Questions without these (or that are very short) go straight to the agent.
+_COMPLEX_SIGNALS = [
+    "vs", "versus", "compare", "comparison",
+    "top ", "trend", "over time",
+    "by month", "by quarter", "by year", "by week",
+    "breakdown", "distribution", "correlation",
+    "and also", "and then", "for each",
+    "per ", "across ", "between ",
+    "how does", "how do", "what is the relationship",
+    "rank", "ranking", "segment", "segmentation",
+]
+
+
+def _should_pre_plan(question: str) -> bool:
+    """Fast heuristic — skip the LLM pre-planner for obviously simple questions.
+
+    Returns True only if the question looks complex enough to benefit from
+    decomposition. This avoids a full LLM round-trip (~500-1500 ms) for the
+    majority of single-query questions.
+
+    Threshold raised to 12 words (was 8) — questions under 12 words are nearly
+    always single-query even when they contain comparison keywords.
+    """
+    q = question.lower()
+    words = q.split()
+    # Very short questions are almost always single-query
+    if len(words) < 12:
+        return False
+    # At least one complexity signal must be present
+    return any(signal in q for signal in _COMPLEX_SIGNALS)
 
 _PRE_PLAN_PROMPT = """\
 You are a data analysis planner. Given a user question and a database schema,
@@ -55,9 +87,14 @@ async def pre_plan(question: str, schema_summary: str) -> dict | None:
     """Decompose a question into a structured plan using Gemini Flash.
 
     Returns the plan dict, or None if planning fails or question is simple.
+    Skips the LLM entirely for short/simple questions via a fast heuristic.
     """
+    # Fast path — avoid LLM round-trip for obviously simple questions
+    if not _should_pre_plan(question):
+        return None
+
     try:
-        llm = get_generation_llm()
+        llm = get_synthesis_llm()  # 2048-token cap — plan JSON is <500 tokens
         messages = [
             SystemMessage(content=_PRE_PLAN_PROMPT),
             HumanMessage(content=(

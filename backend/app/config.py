@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash"
 
     # Schema cache TTL in seconds
-    schema_cache_ttl: int = 600  # 10 minutes
+    schema_cache_ttl: int = 3600  # 1 hour (was 10 min — schemas rarely change)
 
     # Auth / Admin
     jwt_secret: str = "CHANGE-ME-in-production"  # override via JWT_SECRET env var
