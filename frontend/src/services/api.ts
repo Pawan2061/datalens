@@ -25,7 +25,8 @@ export async function sendMessage(
   connectionId: string,
   analysisMode: 'quick' | 'deep' = 'quick',
   workspaceId: string = '',
-  history: HistoryMessage[] = []
+  history: HistoryMessage[] = [],
+  customerScope: string = ''
 ): Promise<{ session_id: string; status: string }> {
   const response = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',
@@ -36,6 +37,7 @@ export async function sendMessage(
       connection_id: connectionId,
       analysis_mode: analysisMode,
       workspace_id: workspaceId,
+      customer_scope: customerScope,
       history,
       user_id: (() => { try { const a = JSON.parse(localStorage.getItem('datalens-auth') || '{}'); return a?.state?.user?.id || ''; } catch { return ''; } })(),
     }),
@@ -503,6 +505,35 @@ export async function testApiTool(
   if (!response.ok) {
     const err = await response.json().catch(() => ({ detail: 'Test failed' }));
     throw new Error(err.detail || 'API test failed');
+  }
+  return response.json();
+}
+
+// ── Customer scope ────────────────────────────────────────────────
+
+export interface CustomerRecord {
+  id: string;
+  code: string;
+  name: string;
+}
+
+export async function fetchCustomers(
+  connectionId: string,
+  table?: string,
+  idCol?: string,
+  nameCol?: string,
+  codeCol?: string,
+): Promise<{ customers: CustomerRecord[]; error?: string }> {
+  const params = new URLSearchParams({ connection_id: connectionId });
+  if (table)   params.set('table', table);
+  if (idCol)   params.set('id_col', idCol);
+  if (nameCol) params.set('name_col', nameCol);
+  if (codeCol) params.set('code_col', codeCol);
+
+  const response = await fetch(`${API_BASE}/api/scope/customers?${params}`);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Failed' }));
+    throw new Error(err.detail || 'Failed to fetch customers');
   }
   return response.json();
 }

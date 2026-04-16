@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import admin, analytics, chat, connections, health, users, persistence, profiles
+from app.api.routes import admin, analytics, chat, connections, health, scope, users, persistence, profiles
 from app.config import settings
 from app.db.connection_manager import connection_manager
 from app.db.insight_db import insight_db
@@ -37,5 +37,6 @@ app.include_router(connections.router, tags=["connections"])
 app.include_router(users.router, tags=["auth"])
 app.include_router(persistence.router, tags=["persistence"])
 app.include_router(profiles.router, tags=["profiles"])
+app.include_router(scope.router, tags=["scope"])
 app.include_router(admin.router, tags=["admin"])
 app.include_router(analytics.router, tags=["analytics"])

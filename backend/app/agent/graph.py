@@ -169,6 +169,7 @@ async def run_agent(
     queue: asyncio.Queue | None = None,
     history: list[dict] | None = None,
     user_id: str = "",
+    customer_scope: str = "",
 ) -> AsyncGenerator[AgentEvent, None]:
     """Run the LangGraph ReAct agent and yield SSE events.
 
@@ -317,8 +318,21 @@ async def run_agent(
     except Exception:
         pass  # Pre-planner is optional — if it fails, agent proceeds normally
 
+    # ── Customer scope filter (injected when not admin) ─────────────
+    scope_addendum = ""
+    if customer_scope:
+        scope_addendum = (
+            f"\n\n━━ CUSTOMER SCOPE FILTER ━━\n"
+            f"You are operating in CUSTOMER mode for customer_id = {customer_scope}.\n"
+            f"CRITICAL: Every SQL query MUST include a WHERE clause (or equivalent filter) "
+            f"that restricts results to customer_id = {customer_scope}.\n"
+            f"If a table does not have a customer_id column, join it to the relevant table "
+            f"that does. NEVER return data for other customers.\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        )
+
     # Append the execution roadmap to the system prompt
-    agent_prompt = system_prompt + plan_addendum
+    agent_prompt = system_prompt + scope_addendum + plan_addendum
 
     # Create the ReAct agent graph
     # Quick mode → Haiku (tool calling). Deep mode → Sonnet (thorough).

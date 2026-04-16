@@ -29,7 +29,7 @@ export function useChat(workspaceId?: string) {
   const activeSession = sessions.find((s) => s.id === activeSessionId);
 
   const sendMessage = useCallback(
-    async (content: string, connectionId: string, mode: 'quick' | 'deep' = 'quick') => {
+    async (content: string, connectionId: string, mode: 'quick' | 'deep' = 'quick', customerScope: string = '') => {
       setIsLoading(true);
 
       // Read fresh state at call time
@@ -86,7 +86,7 @@ export function useChat(workspaceId?: string) {
           }
         }
 
-        const result = await apiSendMessage(sessionId, content, connectionId, mode, workspaceId || '', history);
+        const result = await apiSendMessage(sessionId, content, connectionId, mode, workspaceId || '', history, customerScope);
         const confirmedSessionId = result.session_id || sessionId;
 
         if (eventSourceRef.current) {

@@ -141,6 +141,7 @@ async def chat(request: ChatRequest):
                 queue=queue,
                 history=history,
                 user_id=request.user_id,
+                customer_scope=request.customer_scope,
             )
         )
 
@@ -158,6 +159,7 @@ async def _run_langgraph_pipeline(
     queue: asyncio.Queue,
     history: list[dict] | None = None,
     user_id: str = "",
+    customer_scope: str = "",
 ) -> None:
     """Run the LangGraph ReAct agent, pushing events to the SSE queue."""
     try:
@@ -169,6 +171,7 @@ async def _run_langgraph_pipeline(
             queue=queue,
             history=history,
             user_id=user_id,
+            customer_scope=customer_scope,
         )
 
         # Record analytics event
