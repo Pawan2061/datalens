@@ -117,11 +117,15 @@ _DATA_KEYWORDS = [
 ]
 
 
-def is_conversational(message: str) -> bool:
+def is_conversational(message: str, has_history: bool = False) -> bool:
     """Detect if a message is conversational (no data query needed).
 
     Returns True for chit-chat that should use the cheap model.
     Returns False for data/analysis requests that need the full agent.
+
+    When has_history=True, the 20-char shortcut is skipped — a short message
+    in an active conversation is likely a follow-up data request, not chit-chat.
+    This makes the classifier language-agnostic for follow-ups (Hindi, etc.).
     """
     cleaned = message.strip().lower()
 
@@ -130,8 +134,10 @@ def is_conversational(message: str) -> bool:
         if kw in cleaned:
             return False
 
-    # Very short messages without data keywords are likely conversational
-    if len(cleaned) < 20:
+    # Very short messages without data keywords are likely conversational —
+    # but only when there's no prior history. With history, a short message
+    # is probably a follow-up data instruction ("ok go ahead", "unke list dedo").
+    if len(cleaned) < 20 and not has_history:
         return True
 
     # Check against conversational patterns

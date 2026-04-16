@@ -26,7 +26,8 @@ export async function sendMessage(
   analysisMode: 'quick' | 'deep' = 'quick',
   workspaceId: string = '',
   history: HistoryMessage[] = [],
-  customerScope: string = ''
+  customerScope: string = '',
+  customerScopeName: string = ''
 ): Promise<{ session_id: string; status: string }> {
   const response = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',
@@ -38,6 +39,7 @@ export async function sendMessage(
       analysis_mode: analysisMode,
       workspace_id: workspaceId,
       customer_scope: customerScope,
+      customer_scope_name: customerScopeName,
       history,
       user_id: (() => { try { const a = JSON.parse(localStorage.getItem('datalens-auth') || '{}'); return a?.state?.user?.id || ''; } catch { return ''; } })(),
     }),

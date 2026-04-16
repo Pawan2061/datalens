@@ -37,6 +37,14 @@ _STREAM_SEP = "===METADATA==="
 _STREAMING_SYNTHESIS_PROMPT = """\
 You are a senior data analyst. Turn SQL query results into executive insights.
 
+CURRENCY & NUMBER FORMATTING (mandatory):
+- All monetary values are in INR (Indian Rupees). Always use ₹ symbol, never $ or USD.
+- Format large numbers in Indian notation:
+  ≥ 1,00,00,000 → crores (e.g. ₹27.4 Cr)
+  ≥ 1,00,000    → lakhs  (e.g. ₹8.86 L)
+  otherwise     → ₹X,XXX
+- Apply this to ALL amounts in both the narrative and key_findings.
+
 OUTPUT — two parts:
 
 PART 1 — NARRATIVE:
@@ -174,6 +182,7 @@ async def run_agent(
     history: list[dict] | None = None,
     user_id: str = "",
     customer_scope: str = "",
+    customer_scope_name: str = "",
 ) -> AsyncGenerator[AgentEvent, None]:
     """Run the LangGraph ReAct agent and yield SSE events.
 
@@ -214,7 +223,7 @@ async def run_agent(
 
     # ── Chit-chat → cheap model (Haiku) ─────────────────────────────
     from app.agent.quick_responses import is_conversational
-    if is_conversational(question):
+    if is_conversational(question, has_history=bool(history)):
         await _emit(queue, AgentEventType.thinking, {
             "step": "conversational",
             "content": "Processing your message...",
@@ -330,14 +339,27 @@ async def run_agent(
     # ── Customer scope filter (injected when not admin) ─────────────
     scope_addendum = ""
     if customer_scope:
+        display_name = customer_scope_name or customer_scope
         scope_addendum = (
             f"\n\n━━ CUSTOMER SCOPE FILTER ━━\n"
-            f"You are operating in CUSTOMER mode for customer_id = {customer_scope}.\n"
+            f"You are operating in CUSTOMER mode. The user is viewing as: {display_name}.\n"
+            f"customer_id = {customer_scope}\n"
             f"CRITICAL: Every SQL query MUST include a WHERE clause (or equivalent filter) "
-            f"that restricts results to customer_id = {customer_scope}.\n"
+            f"that restricts results to this customer_id = {customer_scope}.\n"
             f"If a table does not have a customer_id column, join it to the relevant table "
             f"that does. NEVER return data for other customers.\n"
+            f"IMPORTANT: The customer context is already set to '{display_name}'. "
+            f"Do NOT ask the user which customer they mean — all questions refer to this customer.\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        )
+    else:
+        scope_addendum = (
+            f"\n\n━━ ADMIN MODE ━━\n"
+            f"You are operating in ADMIN mode — unrestricted view across ALL customers.\n"
+            f"Do NOT apply any customer_id filter. Return data for all customers unless "
+            f"the user explicitly names a specific one in their current message.\n"
+            f"Ignore any customer scope references from prior conversation turns.\n"
+            f"━━━━━━━━━━━━━━━━\n"
         )
 
     # Append the execution roadmap to the system prompt

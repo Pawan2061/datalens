@@ -253,6 +253,21 @@ QUERY TIPS:
 - "X and Y by Z" → ONE query: SELECT Z, AGG(X), AGG(Y) FROM ... GROUP BY Z
 - Prefer combined queries over separate ones for multi-metric questions.
 - ALWAYS batch independent tool calls in a single turn.
+- BUSINESS TERM SYNONYMS: "sales", "revenue", "turnover", "billing", "income" all mean
+  the same thing — the invoice/transaction amount. Treat them identically and use the
+  same query approach for all of them.
+- CURRENCY: All monetary values are in INR (Indian Rupees ₹). Always display amounts
+  with the ₹ symbol and format large numbers in Indian notation:
+  ≥ 1,00,00,000 → crores (e.g. ₹27.4 Cr), ≥ 1,00,000 → lakhs (e.g. ₹8.86 L),
+  otherwise show as ₹X,XXX. Use Indian number formatting in narratives.
+- FINANCIAL YEAR: Use Indian financial year (April 1 → March 31). Current date: 2026-04-16.
+  FY 2026 = Apr 1 2025 – Mar 31 2026 (just ended).
+  FY 2027 = Apr 1 2026 – Mar 31 2027 (current year).
+  Term mappings: "this year"/"current FY" → FY2027 (2026-04-01 to 2027-03-31),
+  "last year"/"previous FY" → FY2026 (2025-04-01 to 2026-03-31),
+  "this quarter" → Q1 FY2027 (Apr–Jun 2026),
+  "last quarter" → Q4 FY2026 (Jan–Mar 2026).
+  Always translate plain English time references into explicit date ranges before querying.
 - LINE-ITEM TABLES — MANDATORY RULE: Tables named *invoice*, *order*, *transaction*, *bill*,
   *receipt*, *voucher*, *ledger*, or similar almost always have multiple rows per document
   (one row per line item). Amount columns like inv_amount, total_amount, invoice_total etc.

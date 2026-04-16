@@ -118,7 +118,7 @@ export default function WorkspaceView() {
   const handleSend = useCallback(
     (message: string, mode: 'quick' | 'deep' = 'quick') => {
       const connId = activeConnectionId || '';
-      sendMessage(message, connId, mode, customerScope);
+      sendMessage(message, connId, mode, customerScope, customerScopeName);
     },
     [sendMessage, activeConnectionId, customerScope]
   );
