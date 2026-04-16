@@ -4636,6 +4636,11 @@ div[style*="position: relative"] > .cr-view-toggle {
   align-items: center;
   gap: 12px;
 }
+.pv-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .pv-header-icon {
   color: #6d28d9;
 }
@@ -4769,6 +4774,12 @@ div[style*="position: relative"] > .cr-view-toggle {
   white-space: normal;
   word-wrap: break-word;
   overflow-wrap: break-word;
+}
+.pv-edit-table-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 /* Columns grid */

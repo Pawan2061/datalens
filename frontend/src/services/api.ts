@@ -401,6 +401,47 @@ export async function updateProfileQuestions(
   return response.json();
 }
 
+export async function updateProfile(
+  workspaceId: string,
+  connectionId: string,
+  profile: {
+    executive_summary: string;
+    data_architecture: string;
+    cross_table_insights: string[];
+    suggested_questions: string[];
+    directional_plan: Array<{
+      title: string;
+      question: string;
+      narrative: string;
+      query_template: string;
+      tables: string[];
+      key_columns: string[];
+    }>;
+    tables: Array<{
+      name: string;
+      business_summary: string;
+      analysis_angles: string[];
+    }>;
+  },
+): Promise<{ status: string }> {
+  const response = await fetch(
+    `${API_BASE}/api/workspaces/${workspaceId}/profile`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({
+        connection_id: connectionId,
+        ...profile,
+      }),
+    }
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Failed to update profile' }));
+    throw new Error(err.detail || 'Failed to update profile');
+  }
+  return response.json();
+}
+
 export async function deleteProfile(
   workspaceId: string,
   connectionId: string
