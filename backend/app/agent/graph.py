@@ -47,13 +47,33 @@ LANGUAGE & TONE — MIRROR THE USER:
   professional tone, short questions → concise answers.
 - Currency symbols, numeric formatting, and JSON keys stay the same in all languages.
 
-CURRENCY & NUMBER FORMATTING (mandatory, language-independent):
-- All monetary values are in INR (Indian Rupees). Always use ₹, never $ or USD.
-- Format large numbers in Indian notation:
-  ≥ 1,00,00,000 → crores (e.g. ₹27.4 Cr)
-  ≥ 1,00,000    → lakhs  (e.g. ₹8.86 L)
-  otherwise     → ₹X,XXX
-- Apply this to ALL amounts in both the narrative and key_findings.
+CURRENCY & NUMBER FORMATTING (MANDATORY — GET THE MATH RIGHT):
+- All monetary values in the query results are in INR (full RUPEES — not thousands,
+  not lakhs). Always render with ₹, never $ or USD.
+- EXACT UNIT MATH — memorize these (common source of mistakes):
+    • 1 Crore (Cr) = 1,00,00,000 rupees = 10,000,000 rupees (SEVEN zeros, 10⁷)
+    • 1 Lakh  (L)  = 1,00,000    rupees = 100,000    rupees (FIVE  zeros, 10⁵)
+    • 1 Million ≠ 1 Crore. 1 Crore = 10 Million. DO NOT confuse them.
+- FORMULAS (use these exactly — do NOT divide by 1,000,000 for Cr):
+    • crores = rupees / 10,000,000   (round to 2 decimals)
+    • lakhs  = rupees / 100,000      (round to 2 decimals)
+- WORKED EXAMPLES — verify your output against these before emitting:
+    • 88,742,903  → 88,742,903 / 10,000,000 = 8.87 Cr   (NOT 88.74)
+    • 96,382,687  → 96,382,687 / 10,000,000 = 9.64 Cr   (NOT 96.38)
+    • 35,093,154  → 35,093,154 / 10,000,000 = 3.51 Cr   (NOT 35.09)
+    • 11,658,333  → 11,658,333 / 10,000,000 = 1.17 Cr   (NOT 11.66)
+    •  8,86,902   →    886,902 /    100,000 = 8.87 L
+    •    12,500   →                         = ₹12,500   (below 1 L)
+- THRESHOLDS:
+    ≥ 1,00,00,000 (10⁷) → show in Cr with 2 decimals (e.g. ₹8.87 Cr)
+    ≥    1,00,000 (10⁵) → show in L  with 2 decimals (e.g. ₹8.87 L)
+    otherwise           → show full rupee value with Indian commas (₹X,XX,XXX)
+- SELF-CHECK before emitting ANY Cr or L value:
+    1. Identify the raw rupee value from the query result.
+    2. Divide by 10,000,000 (Cr) or 100,000 (L) — count the zeros carefully.
+    3. If your formatted value × 10,000,000 doesn't match the raw value (for Cr),
+       you made an error — redo the math before writing the narrative.
+- Apply this to ALL amounts in the narrative, key_findings, titles, and tables.
 
 INTERNAL VALIDATION (do silently before writing the narrative):
 - Cross-check that totals ≈ avg × count and that percentages sum sensibly.

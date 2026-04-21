@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Sparkles, LayoutGrid, Check, Trash2, ThumbsUp, ThumbsDown, Zap } from 'lucide-react';
 import type { ChatMessage, InsightResult } from '../../types/chat';
 import ThinkingSteps from './ThinkingSteps';
@@ -90,7 +91,7 @@ export default function MessageBubble({ message, onFollowUp, onPushToCanvas, onD
         {/* Streaming narrative — shown while synthesis is generating, hidden once insightResult arrives */}
         {message.streamingNarrative && !message.insightResult && (
           <div className="chat-streaming-narrative">
-            <Markdown>{message.streamingNarrative}</Markdown>
+            <Markdown remarkPlugins={[remarkGfm]}>{message.streamingNarrative}</Markdown>
           </div>
         )}
 
@@ -193,7 +194,13 @@ function CompactInsightPreview({
   return (
     <div className="chat-compact-preview">
       <h4>{summary.title}</h4>
-      <p>{renderBoldText(expanded ? narrativeText : snippet)}</p>
+      {expanded ? (
+        <div className="chat-compact-md">
+          <Markdown remarkPlugins={[remarkGfm]}>{narrativeText}</Markdown>
+        </div>
+      ) : (
+        <p>{renderBoldText(snippet)}</p>
+      )}
       {hasMore && (
         <button className="chat-compact-expand-btn" onClick={() => setExpanded(!expanded)}>
           {expanded ? 'Show less' : 'Read more'}

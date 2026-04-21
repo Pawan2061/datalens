@@ -1554,6 +1554,104 @@ body {
   line-height: 1.6;
   margin: 0 0 12px;
 }
+
+/* Markdown-rendered narrative (expanded) — tables, lists, headers */
+.chat-compact-md {
+  font-size: 12px;
+  color: #374151;
+  line-height: 1.6;
+  margin: 0 0 12px;
+}
+.chat-compact-md > *:first-child { margin-top: 0; }
+.chat-compact-md > *:last-child { margin-bottom: 0; }
+.chat-compact-md p {
+  margin: 0 0 8px;
+}
+.chat-compact-md h1,
+.chat-compact-md h2,
+.chat-compact-md h3 {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+  margin: 12px 0 6px;
+  line-height: 1.35;
+}
+.chat-compact-md h1:first-child,
+.chat-compact-md h2:first-child,
+.chat-compact-md h3:first-child { margin-top: 0; }
+.chat-compact-md strong { color: #111827; font-weight: 600; }
+.chat-compact-md em { font-style: italic; }
+.chat-compact-md ul,
+.chat-compact-md ol {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+.chat-compact-md li { margin: 2px 0; }
+.chat-compact-md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  background: #eef2ff;
+  color: #3730a3;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.chat-compact-md pre {
+  background: #f3f4f6;
+  padding: 10px 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0 0 10px;
+  font-size: 11px;
+}
+.chat-compact-md pre code {
+  background: none;
+  padding: 0;
+  color: #111827;
+}
+.chat-compact-md blockquote {
+  border-left: 3px solid #c7d2fe;
+  padding-left: 10px;
+  color: #4b5563;
+  margin: 6px 0 10px;
+}
+.chat-compact-md a {
+  color: #4f46e5;
+  text-decoration: underline;
+}
+/* Tables — the main reason for enabling remark-gfm */
+.chat-compact-md table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0 12px;
+  font-size: 11.5px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.chat-compact-md thead {
+  background: #f5f6fb;
+}
+.chat-compact-md th,
+.chat-compact-md td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid #eef0f5;
+  vertical-align: top;
+}
+.chat-compact-md th {
+  font-weight: 600;
+  color: #111827;
+  white-space: nowrap;
+}
+.chat-compact-md tr:last-child td { border-bottom: none; }
+.chat-compact-md td:has(+ td:empty),
+.chat-compact-md td:empty { color: #9ca3af; }
+/* Right-align numeric-looking cells for easier scanning */
+.chat-compact-md td[align="right"],
+.chat-compact-md th[align="right"] { text-align: right; }
+.chat-compact-md td[align="center"],
+.chat-compact-md th[align="center"] { text-align: center; }
 .chat-compact-expand-btn {
   background: none;
   border: none;

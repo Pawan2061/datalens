@@ -94,6 +94,10 @@ def scrub_insight_result(insight: dict) -> dict:
     if not insight:
         return insight
 
+    # Fix common LLM currency-unit confusions (million vs crore) FIRST so we
+    # don't accidentally redact a corrected number downstream.
+    insight = normalize_currency_units(insight)
+
     all_redactions: list[str] = []
 
     # Scrub summary
@@ -125,4 +129,121 @@ def scrub_insight_result(insight: dict) -> dict:
     if all_redactions:
         logger.info("Scrubbed %d items from insight result", len(all_redactions))
 
+    return insight
+
+
+# ── INR unit normalizer ─────────────────────────────────────────────
+# The synthesis LLM occasionally confuses "million" with "crore" (1 Cr = 10 M,
+# not 1 M) and renders ₹8.87 Cr as ₹88.74 Cr. We detect this by cross-checking
+# every "X.XX Cr" / "X.XX L" mention in the narrative against the raw numeric
+# values present in the result's tables and charts, and auto-correct when the
+# LLM's value equals raw/1,000,000 (wrong) instead of raw/10,000,000 (right).
+
+_CR_RE = re.compile(
+    r"(?P<num>\d[\d,]*\.?\d*)\s*(?:Cr(?:ore)?s?)\b",
+    re.IGNORECASE,
+)
+_L_RE = re.compile(
+    r"(?P<num>\d[\d,]*\.?\d*)\s*(?:L(?:akh)?s?)\b",
+    re.IGNORECASE,
+)
+
+
+def _collect_numeric_values(insight: dict) -> list[float]:
+    """Positive numeric values (≥ 1,000) from all tables and chart data."""
+    values: list[float] = []
+    containers = (insight.get("tables") or []) + (insight.get("charts") or [])
+    for container in containers:
+        for row in container.get("data") or []:
+            if not isinstance(row, dict):
+                continue
+            for v in row.values():
+                if isinstance(v, bool):
+                    continue
+                if isinstance(v, (int, float)) and v >= 1_000:
+                    values.append(float(v))
+    return values
+
+
+def _close(a: float, b: float) -> bool:
+    """Values are equal within 2% (or 0.05 absolute for tiny numbers)."""
+    return abs(a - b) < max(0.05, abs(b) * 0.02)
+
+
+def _fix_currency_units(
+    text: str, raw_values: list[float], correct_div: float, wrong_div: float, unit: str, pattern: re.Pattern
+) -> tuple[str, int]:
+    """Rewrite 'X Cr' / 'X L' values that were computed with the wrong divisor."""
+    if not text or not raw_values:
+        return text, 0
+
+    fixes = 0
+
+    def _sub(match: re.Match) -> str:
+        nonlocal fixes
+        num_str = match.group("num").replace(",", "")
+        try:
+            llm_val = float(num_str)
+        except ValueError:
+            return match.group(0)
+        for raw in raw_values:
+            wrong = raw / wrong_div
+            correct = raw / correct_div
+            # LLM value matches the WRONG divisor AND a different correct value
+            # exists for the same raw number → classic million/crore mixup.
+            if _close(wrong, llm_val) and not _close(correct, llm_val):
+                fixes += 1
+                return f"{correct:.2f} {unit}"
+        return match.group(0)
+
+    new_text = pattern.sub(_sub, text)
+    return new_text, fixes
+
+
+def normalize_currency_units(insight: dict) -> dict:
+    """Correct Cr/L values in narrative/title/key_findings that were produced
+    by dividing by 1,000,000 instead of 10,000,000 (or 10,000 instead of 100,000).
+
+    Ground truth is the raw numeric values already present in `tables` and
+    `charts[].data`. No change is made when the LLM's value is ambiguous
+    (matches both divisors) or when no matching raw value exists.
+    """
+    if not insight:
+        return insight
+    raw_values = _collect_numeric_values(insight)
+    if not raw_values:
+        return insight
+
+    total_fixes = 0
+    fields_touched: list[str] = []
+
+    def _apply(text: str) -> str:
+        nonlocal total_fixes
+        t1, n1 = _fix_currency_units(text, raw_values, 10_000_000, 1_000_000, "Cr", _CR_RE)
+        t2, n2 = _fix_currency_units(t1, raw_values, 100_000, 10_000, "L", _L_RE)
+        total_fixes += n1 + n2
+        return t2
+
+    summary = insight.get("summary") or {}
+    for field in ("title", "narrative"):
+        original = summary.get(field)
+        if isinstance(original, str) and original:
+            fixed = _apply(original)
+            if fixed != original:
+                summary[field] = fixed
+                fields_touched.append(f"summary.{field}")
+    for kf in summary.get("key_findings") or []:
+        for field in ("headline", "detail"):
+            original = kf.get(field)
+            if isinstance(original, str) and original:
+                fixed = _apply(original)
+                if fixed != original:
+                    kf[field] = fixed
+                    fields_touched.append(f"key_finding.{field}")
+
+    if total_fixes:
+        logger.warning(
+            "Currency normalizer corrected %d Cr/L value(s) in: %s",
+            total_fixes, ", ".join(fields_touched),
+        )
     return insight
