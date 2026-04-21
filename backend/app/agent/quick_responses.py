@@ -166,20 +166,38 @@ class ResponseCache:
         self._max_size = max_size
         self._ttl = ttl_seconds
 
-    def _normalize(self, question: str, connection_id: str) -> str:
-        """Normalize a question for cache key generation."""
+    def _normalize(
+        self,
+        question: str,
+        connection_id: str,
+        customer_scope: str = "",
+        analysis_mode: str = "quick",
+        selected_tables: Optional[list[str]] = None,
+    ) -> str:
+        """Normalize a question + scope into a cache key.
+
+        The key MUST include every input that changes the produced answer.
+        Missing a field here silently serves one scope's result to another
+        (e.g. admin data leaked to a customer view) — so be conservative.
+        """
         q = question.strip().lower()
-        # Remove extra whitespace
         q = re.sub(r'\s+', ' ', q)
-        # Remove common filler words that don't change meaning
         q = re.sub(r'\b(please|can you|could you|i want to|show me|give me|tell me|i need)\b', '', q)
         q = q.strip()
-        # Include connection_id so different DBs don't share cache
-        return hashlib.sha256(f"{connection_id}:{q}".encode()).hexdigest()[:16]
+        tables_key = ",".join(sorted(selected_tables)) if selected_tables else ""
+        composite = f"{connection_id}|{customer_scope}|{analysis_mode}|{tables_key}|{q}"
+        return hashlib.sha256(composite.encode()).hexdigest()[:16]
 
-    def get(self, question: str, connection_id: str) -> Optional[dict]:
+    def get(
+        self,
+        question: str,
+        connection_id: str,
+        customer_scope: str = "",
+        analysis_mode: str = "quick",
+        selected_tables: Optional[list[str]] = None,
+    ) -> Optional[dict]:
         """Look up a cached response. Returns InsightResult dict or None."""
-        key = self._normalize(question, connection_id)
+        key = self._normalize(question, connection_id, customer_scope, analysis_mode, selected_tables)
         entry = self._cache.get(key)
         if entry is None:
             return None
@@ -190,14 +208,22 @@ class ResponseCache:
         entry["hit_count"] += 1
         return entry["response"]
 
-    def put(self, question: str, connection_id: str, response: dict) -> None:
+    def put(
+        self,
+        question: str,
+        connection_id: str,
+        response: dict,
+        customer_scope: str = "",
+        analysis_mode: str = "quick",
+        selected_tables: Optional[list[str]] = None,
+    ) -> None:
         """Cache a response for a question."""
         # Don't cache error responses or empty results
         meta = response.get("execution_metadata", {})
         if meta.get("total_rows", 0) == 0:
             return
 
-        key = self._normalize(question, connection_id)
+        key = self._normalize(question, connection_id, customer_scope, analysis_mode, selected_tables)
 
         # Evict oldest if at capacity
         if len(self._cache) >= self._max_size and key not in self._cache:

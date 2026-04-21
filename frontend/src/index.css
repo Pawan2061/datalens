@@ -983,7 +983,7 @@ body {
   overflow: hidden;
 }
 .wv-sidebar--expanded {
-  width: 260px;
+  width: 220px;
 }
 .wv-sidebar--collapsed {
   width: 48px;
