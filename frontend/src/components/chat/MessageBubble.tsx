@@ -164,7 +164,7 @@ function CompactInsightPreview({
   onFollowUp?: (question: string) => void;
 }) {
   const [pushed, setPushed] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const { summary, charts, tables } = insight;
   const chartCount = charts?.length || 0;
   const tableCount = tables?.length || 0;
