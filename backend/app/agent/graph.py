@@ -37,26 +37,69 @@ _STREAM_SEP = "===METADATA==="
 _STREAMING_SYNTHESIS_PROMPT = """\
 You are a senior data analyst. Turn SQL query results into executive insights.
 
-CURRENCY & NUMBER FORMATTING (mandatory):
-- All monetary values are in INR (Indian Rupees). Always use ₹ symbol, never $ or USD.
-- Format large numbers in Indian notation:
-  ≥ 1,00,00,000 → crores (e.g. ₹27.4 Cr)
-  ≥ 1,00,000    → lakhs  (e.g. ₹8.86 L)
-  otherwise     → ₹X,XXX
-- Apply this to ALL amounts in both the narrative and key_findings.
+LANGUAGE & TONE — MIRROR THE USER:
+- Detect language from the user's question (passed in the input). If it is Hinglish
+  (Hindi in Latin script mixed with English, e.g. "pichle mahine ka revenue kya tha?"),
+  write the narrative, title, key_findings, and follow_up_questions in the SAME
+  Hinglish style. Do NOT switch to pure Devanagari Hindi or pure English.
+- If the question is in English, respond in English.
+- Match their register: casual questions → conversational tone, formal questions →
+  professional tone, short questions → concise answers.
+- Currency symbols, numeric formatting, and JSON keys stay the same in all languages.
+
+CURRENCY & NUMBER FORMATTING (MANDATORY — GET THE MATH RIGHT):
+- All monetary values in the query results are in INR (full RUPEES — not thousands,
+  not lakhs). Always render with ₹, never $ or USD.
+- EXACT UNIT MATH — memorize these (common source of mistakes):
+    • 1 Crore (Cr) = 1,00,00,000 rupees = 10,000,000 rupees (SEVEN zeros, 10⁷)
+    • 1 Lakh  (L)  = 1,00,000    rupees = 100,000    rupees (FIVE  zeros, 10⁵)
+    • 1 Million ≠ 1 Crore. 1 Crore = 10 Million. DO NOT confuse them.
+- FORMULAS (use these exactly — do NOT divide by 1,000,000 for Cr):
+    • crores = rupees / 10,000,000   (round to 2 decimals)
+    • lakhs  = rupees / 100,000      (round to 2 decimals)
+- WORKED EXAMPLES — verify your output against these before emitting:
+    • 88,742,903  → 88,742,903 / 10,000,000 = 8.87 Cr   (NOT 88.74)
+    • 96,382,687  → 96,382,687 / 10,000,000 = 9.64 Cr   (NOT 96.38)
+    • 35,093,154  → 35,093,154 / 10,000,000 = 3.51 Cr   (NOT 35.09)
+    • 11,658,333  → 11,658,333 / 10,000,000 = 1.17 Cr   (NOT 11.66)
+    •  8,86,902   →    886,902 /    100,000 = 8.87 L
+    •    12,500   →                         = ₹12,500   (below 1 L)
+- THRESHOLDS:
+    ≥ 1,00,00,000 (10⁷) → show in Cr with 2 decimals (e.g. ₹8.87 Cr)
+    ≥    1,00,000 (10⁵) → show in L  with 2 decimals (e.g. ₹8.87 L)
+    otherwise           → show full rupee value with Indian commas (₹X,XX,XXX)
+- SELF-CHECK before emitting ANY Cr or L value:
+    1. Identify the raw rupee value from the query result.
+    2. Divide by 10,000,000 (Cr) or 100,000 (L) — count the zeros carefully.
+    3. If your formatted value × 10,000,000 doesn't match the raw value (for Cr),
+       you made an error — redo the math before writing the narrative.
+- Apply this to ALL amounts in the narrative, key_findings, titles, and tables.
+
+INTERNAL VALIDATION (do silently before writing the narrative):
+- Cross-check that totals ≈ avg × count and that percentages sum sensibly.
+- If numbers look inconsistent across sub-results (e.g. per-customer totals don't
+  roll up to the overall total), flag it briefly in the narrative rather than
+  glossing over it. Do NOT fabricate reconciliations.
+- Never invent a figure the data does not contain.
 
 OUTPUT — two parts:
 
-PART 1 — NARRATIVE:
-Write a markdown narrative (2-4 paragraphs, or ## sections for multi-part questions).
-Rules:
-- Open with the single most important takeaway in **bold**.
-- Use exact numbers from the data: percentages, totals, averages.
+PART 1 — NARRATIVE (markdown, well-structured for UI readability):
+- Open with the single most important takeaway in **bold** — the headline a busy
+  executive would want first.
+- Use exact numbers from the data: percentages, totals, averages, min/max.
 - Compare values: "Category A is **2.3× larger** than Category B."
-- Highlight surprises or anomalies.
+- Highlight surprises, outliers, or anomalies that break the pattern.
 - End with a brief "so what" — why the reader should care, what action to consider.
-- For multi-part questions (when sub_questions is provided): use ## headers per sub-question,
-  then a final ## Putting It Together section that ties findings together.
+- STRUCTURE:
+  • For single-part questions: 2-4 short paragraphs, blank line between paragraphs.
+  • For multi-part questions (when sub_questions is provided): one ## header per
+    sub-question, then a final ## Putting It Together section that ties the findings
+    together and surfaces cross-cutting insights.
+- TABLES: when comparing 3+ items on 2+ metrics, use a markdown table — it is far
+  easier to scan than prose. Keep tables compact (≤ 8 rows, ≤ 5 columns).
+- Prefer tight bullets over dense paragraphs when listing comparable items.
+- No emojis. No filler adjectives ("amazing", "incredible"). Let numbers speak.
 
 Then output this separator on its own line:
 ===METADATA===
@@ -203,7 +246,16 @@ async def run_agent(
         return
 
     # ── Response cache check ─────────────────────────────────────
-    cached = response_cache.get(question, connection_id)
+    # Cache key MUST include scope/mode/tables — otherwise admin answers
+    # can be served to a scoped customer view (data leak) and quick/deep
+    # results collide with each other.
+    cached = response_cache.get(
+        question,
+        connection_id,
+        customer_scope=customer_scope,
+        analysis_mode=analysis_mode,
+        selected_tables=selected_tables,
+    )
     if cached:
         await _emit(queue, AgentEventType.thinking, {
             "step": "cache_hit",
@@ -234,7 +286,14 @@ async def run_agent(
             )
             total_duration = (time.perf_counter() - start_time) * 1000
             final = _build_conversational_result(response_text, total_duration)
-            response_cache.put(question, connection_id, final)
+            response_cache.put(
+                question,
+                connection_id,
+                final,
+                customer_scope=customer_scope,
+                analysis_mode=analysis_mode,
+                selected_tables=selected_tables,
+            )
             await _emit(queue, AgentEventType.final_result, final)
             await _emit_done(queue)
             return
@@ -658,8 +717,16 @@ async def run_agent(
     from app.guardrails.response_guard import scrub_insight_result
     final_result = scrub_insight_result(final_result)
 
-    # Cache the result for future similar questions
-    response_cache.put(question, connection_id, final_result)
+    # Cache the result for future similar questions.
+    # Scope/mode/tables MUST be part of the key — see ResponseCache._normalize.
+    response_cache.put(
+        question,
+        connection_id,
+        final_result,
+        customer_scope=customer_scope,
+        analysis_mode=analysis_mode,
+        selected_tables=selected_tables,
+    )
 
     await _emit(queue, AgentEventType.final_result, final_result)
 
@@ -1199,13 +1266,20 @@ async def _run_cheap_conversational(
             schema_summary = "(Database connected)"
 
     prompt = f"""\
-You are DataLens, a friendly data analyst assistant. The user is chatting casually.
+You are DataLens, a friendly AI data analyst assistant. The user is chatting casually.
 Respond naturally in 1-3 sentences. Be warm, helpful, and concise.
+
+LANGUAGE & TONE — MIRROR THE USER:
+- If the user writes in Hinglish (Hindi in Latin script mixed with English,
+  e.g. "kaise ho?", "data dikhao"), reply in the SAME Hinglish style.
+  Do NOT switch to pure Devanagari Hindi or pure English.
+- If the user writes in English, reply in English.
+- Match their register: casual → casual, formal → formal, short → short.
 
 {schema_summary}
 
 If the user asks about the data/tables, give a brief business-friendly overview.
-Use this format for welcome messages:
+Use this format for welcome / capability messages:
 TITLE: [Short title]
 [1-2 sentence greeting]
 INSIGHTS:

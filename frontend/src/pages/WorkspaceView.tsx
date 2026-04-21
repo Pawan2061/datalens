@@ -368,9 +368,9 @@ export default function WorkspaceView() {
                 isRefreshing={isRefreshing}
               />
             }
-            defaultLeftWidth={420}
-            minLeftWidth={320}
-            minRightWidth={400}
+            defaultLeftWidth={540}
+            minLeftWidth={360}
+            minRightWidth={340}
           />
         </div>
       </div>
