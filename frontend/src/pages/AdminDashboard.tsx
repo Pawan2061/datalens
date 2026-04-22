@@ -14,8 +14,7 @@ import ApiToolManager from '../components/workspace/ApiToolManager';
 import type { CreateWorkspaceResult } from '../components/workspace/CreateWorkspaceDialog';
 import type { ConnectionInfo } from '../types/connection';
 import { createWorkspaceOnBackend } from '../services/api';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API_BASE } from '../services/apiBase';
 
 type Section = 'dashboard' | 'workspaces' | 'managers' | 'users' | 'usage';
 type UserFilter = 'all' | 'pending' | 'active' | 'suspended';

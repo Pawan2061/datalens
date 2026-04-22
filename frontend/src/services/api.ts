@@ -1,6 +1,5 @@
 import type { ConnectionConfig, ConnectionInfo, ConnectorType, SchemaInfo } from '../types/connection';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API_BASE } from './apiBase';
 
 function getAuthHeaders(): Record<string, string> {
   try {

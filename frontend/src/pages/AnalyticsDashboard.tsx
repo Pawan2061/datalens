@@ -5,8 +5,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import { useAuthStore } from '../store/authStore';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API_BASE } from '../services/apiBase';
 
 const PALETTE = ['#6366f1', '#f97316', '#10b981', '#8b5cf6', '#ef4444', '#06b6d4', '#ec4899'];
 
