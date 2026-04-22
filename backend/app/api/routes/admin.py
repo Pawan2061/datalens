@@ -173,7 +173,13 @@ async def admin_usage(
     limit: int = 50,
     admin: dict = Depends(get_admin_user),
 ):
-    """Return recent usage log entries across all users."""
+    """Return recent usage log entries across all users.
+
+    Enriches each row with user_name / user_email so the admin Usage Logs
+    table can render the user column (UsageRecord itself only carries
+    user_id). Pulls cache token fields through untouched — the writer in
+    auth/quota.record_usage persists them.
+    """
     if not insight_db.is_ready:
         raise HTTPException(status_code=503, detail="Persistence not configured")
 
@@ -185,7 +191,42 @@ async def admin_usage(
                 enable_cross_partition_query=True,
             )
         )
-        return [_clean(doc) for doc in results[:limit]]
+        trimmed = [_clean(doc) for doc in results[:limit]]
+
+        # Batch-resolve user_id → (name, email). One query for the distinct
+        # set of user_ids in this page, rather than one query per row.
+        user_ids = {row.get("user_id", "") for row in trimmed if row.get("user_id")}
+        user_map: dict[str, dict] = {}
+        if user_ids:
+            try:
+                users_container = insight_db.container("users")
+                # Cosmos doesn't support parameterized IN with arrays in every
+                # SDK version — build the query with quoted literals (ids are
+                # 12-char hex, safe to inline; still defense-check).
+                safe_ids = [uid for uid in user_ids if uid.replace("-", "").isalnum()]
+                if safe_ids:
+                    id_list = ", ".join(f"'{uid}'" for uid in safe_ids)
+                    users_q = (
+                        f"SELECT c.id, c.name, c.email FROM c "
+                        f"WHERE c.id IN ({id_list})"
+                    )
+                    for u in users_container.query_items(
+                        query=users_q, enable_cross_partition_query=True,
+                    ):
+                        user_map[u.get("id", "")] = {
+                            "name": u.get("name", ""),
+                            "email": u.get("email", ""),
+                        }
+            except Exception:
+                pass  # Enrichment is best-effort — fall back to raw user_id
+
+        for row in trimmed:
+            uid = row.get("user_id", "")
+            u = user_map.get(uid, {})
+            row["user_name"] = u.get("name", "") or uid or "Unknown"
+            row["user_email"] = u.get("email", "")
+
+        return trimmed
     except Exception:
         return []
 

@@ -70,6 +70,8 @@ async def record_usage(
     questions: int = 1,
     input_tokens: int = 0,
     output_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
     model_name: str = "",
 ) -> None:
     """Update user's usage counters after a request and write a usage log."""
@@ -126,6 +128,8 @@ async def record_usage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
             cost_usd=cost_usd,
             model_name=model_name,
         )

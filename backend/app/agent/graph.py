@@ -11,6 +11,7 @@ from langgraph.prebuilt import create_react_agent
 from app.agent.models import AgentEvent, AgentEventType
 from app.agent.prompts import build_system_prompt
 from app.agent.schema_cache import schema_cache
+from app.config import settings
 from app.agent.api_tool_cache import (
     get_cached_workspace_api_tools,
     set_cached_workspace_api_tools,
@@ -454,8 +455,15 @@ async def run_agent(
         len(api_tool_configs or []), analysis_mode,
     )
 
-    # Append the execution roadmap to the system prompt
-    agent_prompt = system_prompt + scope_addendum + plan_addendum
+    # Split the prompt into a stable prefix (rules + workspace profile +
+    # API tool descriptions) and a dynamic suffix (scope + per-question plan).
+    # The prefix is what we'd cache with Anthropic prompt caching; the suffix
+    # must stay OUT of the cache key so each turn reflects the current scope
+    # and plan. For non-Anthropic providers we concatenate both into a single
+    # string — behavior is identical to before.
+    static_prefix = system_prompt
+    dynamic_suffix = scope_addendum + plan_addendum
+    agent_prompt = static_prefix + dynamic_suffix
 
     # Create the ReAct agent graph
     # Quick mode → Haiku (tool calling). Deep mode → Sonnet (thorough).
@@ -484,10 +492,21 @@ async def run_agent(
     # Track dynamic tool names for result handling
     dynamic_tool_names = {t.name for t in dynamic_api_tools}
 
+    # ── Prompt caching (Anthropic only, feature-flagged) ───────────────
+    # When active, we mark the static prefix with cache_control=ephemeral so
+    # subsequent turns in the 5-min window pay 0.1x for those tokens. The
+    # dynamic suffix is appended as a separate, uncached block so scope/plan
+    # changes don't invalidate the cache.
+    prompt_arg = _build_cached_prompt_arg(
+        static_prefix=static_prefix,
+        dynamic_suffix=dynamic_suffix,
+        fallback_prompt=agent_prompt,
+    )
+
     graph = create_react_agent(
         model=llm,
         tools=all_tools,
-        prompt=agent_prompt,
+        prompt=prompt_arg,
     )
 
     # Stream through the agent's execution
@@ -495,8 +514,13 @@ async def run_agent(
     all_sub_results: list[dict] = []
     agent_final_text = ""  # Capture the agent's last text response
     # Token usage tracking
+    # input_tokens / output_tokens follow Anthropic semantics: input_tokens is
+    # FRESH input only (excludes cache reads and cache writes). Cache buckets
+    # are tracked separately so the UI can show all four.
     total_input_tokens = 0
     total_output_tokens = 0
+    total_cache_read_tokens = 0
+    total_cache_creation_tokens = 0
     model_name = ""
     # Captured tool outputs for the final result
     synthesis_output: dict | None = None       # analyze_results JSON output
@@ -531,6 +555,9 @@ async def run_agent(
                         um = msg.usage_metadata
                         total_input_tokens += um.get('input_tokens', 0)
                         total_output_tokens += um.get('output_tokens', 0)
+                        details = um.get('input_token_details') or {}
+                        total_cache_read_tokens += details.get('cache_read', 0) or 0
+                        total_cache_creation_tokens += details.get('cache_creation', 0) or 0
                         if not model_name and hasattr(msg, 'response_metadata'):
                             model_name = msg.response_metadata.get('model', '') or msg.response_metadata.get('model_name', '')
                     tool_name = getattr(msg, "name", "")
@@ -618,6 +645,9 @@ async def run_agent(
                         um = msg.usage_metadata
                         total_input_tokens += um.get('input_tokens', 0)
                         total_output_tokens += um.get('output_tokens', 0)
+                        details = um.get('input_token_details') or {}
+                        total_cache_read_tokens += details.get('cache_read', 0) or 0
+                        total_cache_creation_tokens += details.get('cache_creation', 0) or 0
                         if not model_name and hasattr(msg, 'response_metadata'):
                             model_name = msg.response_metadata.get('model', '') or msg.response_metadata.get('model_name', '')
                     text = getattr(msg, "content", "")
@@ -711,6 +741,8 @@ async def run_agent(
                     "input_tokens": total_input_tokens,
                     "output_tokens": total_output_tokens,
                     "total_tokens": total_input_tokens + total_output_tokens,
+                    "cache_read_tokens": total_cache_read_tokens,
+                    "cache_creation_tokens": total_cache_creation_tokens,
                     "model_name": model_name,
                     "estimated_cost_usd": 0.0,
                 },
@@ -739,6 +771,8 @@ async def run_agent(
             agent_final_text, total_duration,
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,
+            cache_read_tokens=total_cache_read_tokens,
+            cache_creation_tokens=total_cache_creation_tokens,
             model_name=model_name,
         )
     else:
@@ -752,6 +786,8 @@ async def run_agent(
             agent_narrative=agent_final_text,
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,
+            cache_read_tokens=total_cache_read_tokens,
+            cache_creation_tokens=total_cache_creation_tokens,
             model_name=model_name,
         )
 
@@ -784,6 +820,8 @@ async def run_agent(
                 questions=1,
                 input_tokens=meta.get("input_tokens", 0),
                 output_tokens=meta.get("output_tokens", 0),
+                cache_read_tokens=meta.get("cache_read_tokens", 0),
+                cache_creation_tokens=meta.get("cache_creation_tokens", 0),
                 model_name=meta.get("model_name", ""),
             )
         except Exception:
@@ -792,7 +830,15 @@ async def run_agent(
     await _emit_done(queue)
 
 
-def _build_conversational_result(agent_text: str, total_duration_ms: float, input_tokens: int = 0, output_tokens: int = 0, model_name: str = "") -> dict:
+def _build_conversational_result(
+    agent_text: str,
+    total_duration_ms: float,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+    model_name: str = "",
+) -> dict:
     """Build an InsightResult for conversational (non-query) responses.
 
     Parses the agent's structured response into title, narrative,
@@ -909,8 +955,14 @@ def _build_conversational_result(agent_text: str, total_duration_ms: float, inpu
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=input_tokens + output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_creation_tokens=cache_creation_tokens,
         model_name=model_name,
-        estimated_cost_usd=_estimate_cost(input_tokens, output_tokens, model_name),
+        estimated_cost_usd=_estimate_cost(
+            input_tokens, output_tokens, model_name,
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+        ),
     )
 
     result = InsightResult(
@@ -930,6 +982,8 @@ def _build_final_result(
     agent_narrative: str = "",
     input_tokens: int = 0,
     output_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
     model_name: str = "",
 ) -> dict:
     """Build an InsightResult-compatible dict from collected sub-query results.
@@ -1130,8 +1184,14 @@ def _build_final_result(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=input_tokens + output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_creation_tokens=cache_creation_tokens,
         model_name=model_name,
-        estimated_cost_usd=_estimate_cost(input_tokens, output_tokens, model_name),
+        estimated_cost_usd=_estimate_cost(
+            input_tokens, output_tokens, model_name,
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+        ),
     )
 
     result = InsightResult(
@@ -1141,6 +1201,50 @@ def _build_final_result(
         execution_metadata=metadata,
     )
     return result.model_dump()
+
+
+def _build_cached_prompt_arg(
+    static_prefix: str,
+    dynamic_suffix: str,
+    fallback_prompt: str,
+):
+    """Return a prompt argument for create_react_agent.
+
+    For Anthropic (when the feature flag is on and the prefix is large enough),
+    returns a callable that emits a SystemMessage with a cache_control marker
+    on the static prefix — subsequent turns reuse the cached prefix at 0.1x
+    list input rate.
+
+    For every other provider (or when caching is disabled / the prefix is too
+    small), returns the plain concatenated string so behavior is IDENTICAL
+    to the pre-caching implementation. No other code path changes.
+    """
+    # Gate on provider + feature flag. Token threshold uses a cheap
+    # chars/4 estimate — good enough for "is this worth caching" decisions.
+    eligible = (
+        settings.llm_provider == "anthropic"
+        and settings.anthropic_prompt_caching
+        and static_prefix
+        and (len(static_prefix) // 4) >= settings.anthropic_prompt_cache_min_tokens
+    )
+    if not eligible:
+        return fallback_prompt
+
+    def _cached_prompt(state):
+        system_blocks: list[dict] = [
+            {
+                "type": "text",
+                "text": static_prefix,
+                "cache_control": {"type": "ephemeral"},
+            },
+        ]
+        if dynamic_suffix:
+            system_blocks.append({"type": "text", "text": dynamic_suffix})
+        msgs: list = [SystemMessage(content=system_blocks)]
+        msgs.extend(state.get("messages", []) or [])
+        return msgs
+
+    return _cached_prompt
 
 
 async def _emit(
@@ -1235,8 +1339,19 @@ def _describe_sql(sql: str) -> str:
     return " ".join(parts)
 
 
-def _estimate_cost(input_tokens: int, output_tokens: int, model_name: str) -> float:
-    """Estimate USD cost based on token counts and model."""
+def _estimate_cost(
+    input_tokens: int,
+    output_tokens: int,
+    model_name: str,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+) -> float:
+    """Estimate USD cost based on token counts and model.
+
+    Anthropic prompt-cache multipliers: cache writes are billed at 1.25x the
+    input rate, cache reads at 0.10x. For non-Anthropic providers these
+    kwargs default to 0, so pricing behavior is unchanged.
+    """
     # Pricing per 1M tokens (approximate)
     _PRICING = {
         "claude-sonnet-4-5": {"input": 3.0, "output": 15.0},
@@ -1260,7 +1375,12 @@ def _estimate_cost(input_tokens: int, output_tokens: int, model_name: str) -> fl
         # Default: assume cheap model
         pricing = {"input": 1.0, "output": 5.0}
 
-    cost = (input_tokens * pricing["input"] / 1_000_000) + (output_tokens * pricing["output"] / 1_000_000)
+    cost = (
+        (input_tokens * pricing["input"] / 1_000_000)
+        + (output_tokens * pricing["output"] / 1_000_000)
+        + (cache_creation_tokens * pricing["input"] * 1.25 / 1_000_000)
+        + (cache_read_tokens * pricing["input"] * 0.10 / 1_000_000)
+    )
     return round(cost, 6)
 
 

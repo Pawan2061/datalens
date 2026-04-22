@@ -52,8 +52,13 @@ export interface ExecutionMetadata {
   input_tokens?: number;
   output_tokens?: number;
   total_tokens?: number;
+  // Anthropic prompt-cache breakdown (0 for non-Anthropic providers)
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
   model_name?: string;
   estimated_cost_usd?: number;
+  // `cached` = in-app ResponseCache hit (whole LLM pipeline skipped).
+  // Prompt-cache reuse is reflected in cache_read_tokens, not here.
   cached?: boolean;
 }
 

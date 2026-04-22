@@ -85,11 +85,18 @@ class ExecutionMetadata(BaseModel):
     sub_query_count: int
     total_rows: int
     # Token usage tracking
+    # input_tokens excludes cache hits — it's the fresh (billable at 1x) input.
+    # cache_read_tokens are billed at 0.1x; cache_creation_tokens at 1.25x.
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
     model_name: str = ""
     estimated_cost_usd: float = 0.0
+    # `cached` reflects an in-app ResponseCache hit (whole LLM pipeline skipped).
+    # It is NOT the Anthropic prompt cache — those savings are reported via
+    # cache_read_tokens / cache_creation_tokens above.
     cached: bool = False
 
 

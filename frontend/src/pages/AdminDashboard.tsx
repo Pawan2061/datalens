@@ -73,9 +73,16 @@ interface UsageEntry {
   user_name: string;
   user_email: string;
   questions: number;
-  tokens: number;
+  // Backend UsageRecord fields (see backend/app/schemas/persistence.py).
+  // Older rows written before cache tracking was added won't have the
+  // cache_* fields; treat them as 0.
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
   cost_usd: number;
-  model: string;
+  model_name?: string;
   timestamp: string;
 }
 
@@ -790,25 +797,46 @@ function UsersSection({ users, loading, onAction, headers }: {
    ================================================================ */
 function UsageSection({ usage, loading }: { usage: UsageEntry[]; loading: boolean }) {
   if (loading) return <div className="adm-loading"><Loader2 size={24} className="ts-spinner" /> Loading usage...</div>;
+  const fmt = (n?: number) => (n ?? 0).toLocaleString();
   return (
     <div className="adm-usage">
       <div className="adm-table-wrapper">
         <table className="adm-table">
           <thead>
-            <tr><th>User</th><th>Questions</th><th>Tokens</th><th>Cost</th><th>Model</th><th>Time</th></tr>
+            <tr>
+              <th>User</th>
+              <th>Questions</th>
+              <th title="Fresh input tokens (non-cached)">Input</th>
+              <th title="Output tokens (assistant response)">Output</th>
+              <th title="Prompt cache: read + write tokens (Anthropic only)">Cache</th>
+              <th>Cost</th>
+              <th>Model</th>
+              <th>Time</th>
+            </tr>
           </thead>
           <tbody>
-            {usage.map((entry, i) => (
-              <tr key={i}>
-                <td><div><div className="adm-user-name">{entry.user_name}</div><div className="adm-user-email">{entry.user_email}</div></div></td>
-                <td>{entry.questions}</td>
-                <td>{entry.tokens?.toLocaleString()}</td>
-                <td>${entry.cost_usd?.toFixed(4)}</td>
-                <td><span className="adm-model-badge">{entry.model}</span></td>
-                <td className="adm-time">{new Date(entry.timestamp).toLocaleString()}</td>
-              </tr>
-            ))}
-            {usage.length === 0 && <tr><td colSpan={6} className="adm-empty">No usage data</td></tr>}
+            {usage.map((entry, i) => {
+              const cacheRead = entry.cache_read_tokens ?? 0;
+              const cacheWrite = entry.cache_creation_tokens ?? 0;
+              const cacheTotal = cacheRead + cacheWrite;
+              const cacheTitle =
+                cacheTotal > 0
+                  ? `Read ${cacheRead.toLocaleString()} • Written ${cacheWrite.toLocaleString()}`
+                  : 'No prompt cache usage';
+              return (
+                <tr key={i}>
+                  <td><div><div className="adm-user-name">{entry.user_name}</div><div className="adm-user-email">{entry.user_email}</div></div></td>
+                  <td>{entry.questions}</td>
+                  <td>{fmt(entry.input_tokens)}</td>
+                  <td>{fmt(entry.output_tokens)}</td>
+                  <td title={cacheTitle}>{fmt(cacheTotal)}</td>
+                  <td>${entry.cost_usd?.toFixed(4)}</td>
+                  <td><span className="adm-model-badge">{entry.model_name || '—'}</span></td>
+                  <td className="adm-time">{new Date(entry.timestamp).toLocaleString()}</td>
+                </tr>
+              );
+            })}
+            {usage.length === 0 && <tr><td colSpan={8} className="adm-empty">No usage data</td></tr>}
           </tbody>
         </table>
       </div>

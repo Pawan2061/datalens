@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     anthropic_foundry_url: str = ""      # Azure AI Foundry endpoint (leave blank for direct API)
     anthropic_planner_model: str = "claude-sonnet-4-5"
     anthropic_worker_model: str = "claude-haiku-4-5"
+    # Prompt caching: cache the static prefix (rules + workspace profile + API
+    # tool descriptions) so subsequent turns in a session pay only 0.1x for
+    # those tokens. Only active when llm_provider == "anthropic".
+    anthropic_prompt_caching: bool = True
+    # Skip caching when the cacheable prefix is below this token count — the
+    # 1.25x write surcharge is not worth it for small prefixes. Anthropic's
+    # own minimum is 1024 (Sonnet) / 2048 (Haiku); we pick the safer upper
+    # bound so the flag is a no-op on tiny prompts.
+    anthropic_prompt_cache_min_tokens: int = 2048
 
     # Google Gemini (FREE tier for quick mode)
     google_api_key: str = ""
