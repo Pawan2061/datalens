@@ -113,6 +113,18 @@ class ApiToolConfig(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     created_by: str = ""
 
+    # Two-step token auth (opt-in). "static" = legacy behavior, unchanged.
+    # "two_step_token" = fetch token from token_endpoint, inject into data call,
+    # refresh-and-retry once if the response indicates failure.
+    auth_mode: str = "static"
+    token_endpoint: str = ""  # Full URL (can include its own reqCode/APIKEY)
+    token_response_path: str = "AUTH_TOKEN"  # Dot-notation path to read token from token response
+    token_param_name: str = "TOKEN"  # Query param name to inject into the data call
+    token_ttl_seconds: int = 1800  # Forced refresh interval; upstream expiry still triggers retry
+    success_field: str = "RESULT_CODE"  # Field on the data response that signals success
+    success_value: str = "PASS"  # Value of success_field that means OK
+    retry_on_auth_failure: bool = True  # Refresh token and retry once on non-success
+
 
 class WorkspaceMember(BaseModel):
     email: str

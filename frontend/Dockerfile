@@ -2,7 +2,9 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+# npm install (not `npm ci`) so the build succeeds even when package-lock.json
+# lags behind package.json. Revisit once the lockfile is regenerated.
+RUN npm install --no-audit --no-fund
 COPY . .
 # Accept build-time env vars for Vite
 ARG VITE_API_URL

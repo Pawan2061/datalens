@@ -491,6 +491,15 @@ export interface ApiToolConfig {
   timeout_seconds: number;
   created_at: string;
   created_by: string;
+  // Two-step token auth (optional, default "static")
+  auth_mode?: 'static' | 'two_step_token';
+  token_endpoint?: string;
+  token_response_path?: string;
+  token_param_name?: string;
+  token_ttl_seconds?: number;
+  success_field?: string;
+  success_value?: string;
+  retry_on_auth_failure?: boolean;
 }
 
 export async function listApiTools(workspaceId: string): Promise<ApiToolConfig[]> {

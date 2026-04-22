@@ -23,6 +23,11 @@ function emptyTool(): Partial<ApiToolConfig> {
     method: 'POST', auth_config: { apikey: '', token: '' },
     input_parameters: [], response_path: '', response_fields: [],
     enabled: true, timeout_seconds: 30,
+    auth_mode: 'static',
+    token_endpoint: '', token_response_path: 'AUTH_TOKEN',
+    token_param_name: 'TOKEN', token_ttl_seconds: 1800,
+    success_field: 'RESULT_CODE', success_value: 'PASS',
+    retry_on_auth_failure: true,
   };
 }
 
@@ -336,7 +341,7 @@ export default function ApiToolManager({ workspaceId, onClose }: ApiToolManagerP
                     />
                   </div>
                   <div className="atm-form-row">
-                    <label>Token</label>
+                    <label>Token (static mode only)</label>
                     <input
                       type="password"
                       value={editTool.auth_config?.token || ''}
@@ -345,9 +350,105 @@ export default function ApiToolManager({ workspaceId, onClose }: ApiToolManagerP
                         auth_config: { ...(editTool.auth_config || {}), token: e.target.value },
                       })}
                       placeholder="TOKEN value"
+                      disabled={editTool.auth_mode === 'two_step_token'}
                     />
                   </div>
                 </div>
+
+                <div className="atm-form-row">
+                  <label>Auth Mode</label>
+                  <select
+                    value={editTool.auth_mode || 'static'}
+                    onChange={(e) => setEditTool({
+                      ...editTool,
+                      auth_mode: e.target.value as 'static' | 'two_step_token',
+                    })}
+                  >
+                    <option value="static">Static (API key / token in request)</option>
+                    <option value="two_step_token">Two-step token (fetch token, then call)</option>
+                  </select>
+                </div>
+
+                {editTool.auth_mode === 'two_step_token' && (
+                  <div className="atm-form-section">
+                    <label style={{ fontWeight: 600 }}>Two-step token settings</label>
+
+                    <div className="atm-form-row">
+                      <label>Token Endpoint *</label>
+                      <input
+                        value={editTool.token_endpoint || ''}
+                        onChange={(e) => setEditTool({ ...editTool, token_endpoint: e.target.value })}
+                        placeholder="https://app.example.com/ediApiAction.do?reqCode=getAuthToken&APIKEY=..."
+                      />
+                    </div>
+
+                    <div className="atm-form-grid">
+                      <div className="atm-form-row">
+                        <label>Token Response Path</label>
+                        <input
+                          value={editTool.token_response_path || ''}
+                          onChange={(e) => setEditTool({ ...editTool, token_response_path: e.target.value })}
+                          placeholder="AUTH_TOKEN"
+                        />
+                      </div>
+                      <div className="atm-form-row">
+                        <label>Token Param Name</label>
+                        <input
+                          value={editTool.token_param_name || ''}
+                          onChange={(e) => setEditTool({ ...editTool, token_param_name: e.target.value })}
+                          placeholder="TOKEN"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="atm-form-grid">
+                      <div className="atm-form-row">
+                        <label>Token TTL (seconds)</label>
+                        <input
+                          type="number"
+                          value={editTool.token_ttl_seconds ?? 1800}
+                          onChange={(e) => setEditTool({
+                            ...editTool,
+                            token_ttl_seconds: Number(e.target.value) || 1800,
+                          })}
+                          min={60}
+                        />
+                      </div>
+                      <div className="atm-form-row">
+                        <label className="atm-toggle-label">
+                          <input
+                            type="checkbox"
+                            checked={editTool.retry_on_auth_failure ?? true}
+                            onChange={(e) => setEditTool({
+                              ...editTool,
+                              retry_on_auth_failure: e.target.checked,
+                            })}
+                          />
+                          Retry once on auth failure
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="atm-form-grid">
+                      <div className="atm-form-row">
+                        <label>Success Field</label>
+                        <input
+                          value={editTool.success_field || ''}
+                          onChange={(e) => setEditTool({ ...editTool, success_field: e.target.value })}
+                          placeholder="RESULT_CODE"
+                        />
+                      </div>
+                      <div className="atm-form-row">
+                        <label>Success Value</label>
+                        <input
+                          value={editTool.success_value || ''}
+                          onChange={(e) => setEditTool({ ...editTool, success_value: e.target.value })}
+                          placeholder="PASS"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="atm-form-row">
                   <label>Response Data Path</label>
@@ -385,6 +486,13 @@ export default function ApiToolManager({ workspaceId, onClose }: ApiToolManagerP
                         value={p.description}
                         onChange={(e) => updateParam(i, 'description', e.target.value)}
                         style={{ flex: 2 }}
+                      />
+                      <input
+                        placeholder="Default"
+                        value={p.default_value}
+                        onChange={(e) => updateParam(i, 'default_value', e.target.value)}
+                        style={{ flex: 1 }}
+                        title="Injected when the LLM omits this parameter. Leave blank to require LLM to provide."
                       />
                       <label className="atm-param-req-label">
                         <input

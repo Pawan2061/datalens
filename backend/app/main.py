@@ -1,3 +1,5 @@
+import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,6 +9,16 @@ from app.api.routes import admin, analytics, chat, connections, health, scope, u
 from app.config import settings
 from app.db.connection_manager import connection_manager
 from app.db.insight_db import insight_db
+
+
+# Root logger config — without this, every `logger.info(...)` in the app
+# (including the [api-tool] URL traces and [agent] scope traces) is
+# silently dropped because Python's default root level is WARNING and
+# uvicorn only configures its own loggers. Override via LOG_LEVEL env.
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 
 @asynccontextmanager

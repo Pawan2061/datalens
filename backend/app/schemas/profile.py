@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ColumnProfile(BaseModel):
@@ -19,6 +19,21 @@ class ColumnProfile(BaseModel):
     max_val: Optional[float] = None
     avg_val: Optional[float] = None
 
+    # Legacy profiles were written when the profiler could emit `null` for
+    # columns it failed to count (empty tables, timed-out distinct queries).
+    # Those nulls sat silently in Cosmos until someone tried to Save an
+    # edited profile — validation then failed on re-load. Coerce to the
+    # documented default so an old snapshot round-trips cleanly.
+    @field_validator("distinct_count", mode="before")
+    @classmethod
+    def _distinct_count_none_to_zero(cls, v: object) -> object:
+        return 0 if v is None else v
+
+    @field_validator("null_pct", mode="before")
+    @classmethod
+    def _null_pct_none_to_zero(cls, v: object) -> object:
+        return 0.0 if v is None else v
+
 
 class TableProfile(BaseModel):
     name: str
@@ -28,6 +43,11 @@ class TableProfile(BaseModel):
     business_summary: str = ""  # LLM-generated description
     analysis_angles: list[str] = []  # Suggested analysis topics
     query_guidance: list[str] = []  # Data nuances: array columns, nested fields, etc.
+
+    @field_validator("row_count", mode="before")
+    @classmethod
+    def _row_count_none_to_zero(cls, v: object) -> object:
+        return 0 if v is None else v
 
 
 class DirectionalQuestion(BaseModel):

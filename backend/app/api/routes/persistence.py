@@ -359,14 +359,89 @@ async def test_api_tool(workspace_id: str, tool_id: str, body: ApiToolTestReques
     import httpx
     import time
 
+    from app.agent.tools.api_tool_factory import _extract_nested
+
     endpoint_url = tool_cfg.get("endpoint_url", "")
     req_code = tool_cfg.get("req_code", "")
-    method = tool_cfg.get("method", "POST").upper()
-    auth = tool_cfg.get("auth_config", {})
+    method = (tool_cfg.get("method") or "POST").upper()
+    auth = tool_cfg.get("auth_config", {}) or {}
     timeout = tool_cfg.get("timeout_seconds", 30)
+    auth_mode = (tool_cfg.get("auth_mode") or "static").lower()
 
-    # Build request body
-    req_body = {}
+    def _mark_status(status: str) -> None:
+        for t in tools:
+            if t.get("id") == tool_id:
+                t["test_status"] = status
+        ws["api_tools"] = tools
+        insight_db.container("workspaces").upsert_item(ws)
+        invalidate_workspace_api_tools_cache(workspace_id)
+
+    # ── Two-step: fetch token, then call data endpoint with it in URL ────
+    if auth_mode == "two_step_token":
+        token_endpoint = tool_cfg.get("token_endpoint", "")
+        if not token_endpoint:
+            raise HTTPException(
+                status_code=400,
+                detail="auth_mode=two_step_token requires token_endpoint",
+            )
+        token_response_path = tool_cfg.get("token_response_path") or "AUTH_TOKEN"
+        token_param_name = tool_cfg.get("token_param_name") or "TOKEN"
+
+        token_fetch_start = time.perf_counter()
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                tok_resp = await client.get(token_endpoint)
+                tok_resp.raise_for_status()
+                tok_data = tok_resp.json()
+        except Exception as e:
+            _mark_status("failed")
+            raise HTTPException(status_code=502, detail=f"Token fetch failed: {str(e)}")
+
+        token_fetch_ms = (time.perf_counter() - token_fetch_start) * 1000
+        token_value = _extract_nested(tok_data, token_response_path)
+        if not isinstance(token_value, str) or not token_value.strip():
+            _mark_status("failed")
+            raise HTTPException(
+                status_code=502,
+                detail=f"Token endpoint did not return a token at '{token_response_path}'",
+            )
+        token_value = token_value.strip()
+
+        url = endpoint_url
+        parts: list[str] = []
+        if req_code:
+            parts.append(f"reqCode={req_code}")
+        if auth.get("apikey"):
+            parts.append(f"APIKEY={auth['apikey']}")
+        parts.append(f"{token_param_name}={token_value}")
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}{'&'.join(parts)}"
+
+        data_start = time.perf_counter()
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                if method == "POST":
+                    resp = await client.post(url, json=body.test_params, headers={"Content-Type": "application/json"})
+                else:
+                    resp = await client.get(url, params=body.test_params)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as e:
+            _mark_status("failed")
+            raise HTTPException(status_code=502, detail=f"API call failed: {str(e)}")
+
+        duration_ms = (time.perf_counter() - data_start) * 1000
+        _mark_status("success")
+        return {
+            "status": "success",
+            "auth_mode": "two_step_token",
+            "token_fetch_ms": round(token_fetch_ms, 2),
+            "duration_ms": round(duration_ms, 2),
+            "response": data,
+        }
+
+    # ── Static path: unchanged legacy behavior ──────────────────────────
+    req_body: dict = {}
     if auth.get("apikey"):
         req_body["APIKEY"] = auth["apikey"]
     if auth.get("token"):
@@ -388,24 +463,11 @@ async def test_api_tool(workspace_id: str, tool_id: str, body: ApiToolTestReques
             resp.raise_for_status()
             data = resp.json()
     except Exception as e:
-        # Update test_status to failed
-        for t in tools:
-            if t.get("id") == tool_id:
-                t["test_status"] = "failed"
-        ws["api_tools"] = tools
-        insight_db.container("workspaces").upsert_item(ws)
-        invalidate_workspace_api_tools_cache(workspace_id)
+        _mark_status("failed")
         raise HTTPException(status_code=502, detail=f"API call failed: {str(e)}")
 
     duration_ms = (time.perf_counter() - start) * 1000
-
-    # Update test_status to success
-    for t in tools:
-        if t.get("id") == tool_id:
-            t["test_status"] = "success"
-    ws["api_tools"] = tools
-    insight_db.container("workspaces").upsert_item(ws)
-    invalidate_workspace_api_tools_cache(workspace_id)
+    _mark_status("success")
 
     return {
         "status": "success",

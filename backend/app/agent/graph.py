@@ -276,6 +276,12 @@ async def run_agent(
     # ── Chit-chat → cheap model (Haiku) ─────────────────────────────
     from app.agent.quick_responses import is_conversational
     if is_conversational(question, has_history=bool(history)):
+        import logging as _conv_log
+        _conv_log.getLogger(__name__).info(
+            "[agent] routing to cheap conversational path question=%r "
+            "workspace=%s scope=%r — API tools will NOT be callable on this turn",
+            (question or "")[:120], workspace_id, customer_scope or "admin",
+        )
         await _emit(queue, AgentEventType.thinking, {
             "step": "conversational",
             "content": "Processing your message...",
@@ -370,9 +376,16 @@ async def run_agent(
         workspace_profile=profile_text,
     )
 
-    # Append API tool descriptions to the prompt so the LLM knows about them
+    # Append API tool descriptions to the prompt so the LLM knows about them.
+    # The scope is passed through so the description explicitly flags
+    # customer-slot params as auto-filled (customer mode) or requires the
+    # LLM to confirm a specific customer (admin mode).
     if api_tool_configs:
-        system_prompt += describe_api_tools_for_prompt(api_tool_configs)
+        system_prompt += describe_api_tools_for_prompt(
+            api_tool_configs,
+            customer_scope=customer_scope,
+            customer_scope_name=customer_scope_name,
+        )
 
     # ── Pre-plan complex questions with Gemini Flash (free) ─────────
     await _emit(queue, AgentEventType.thinking, {
@@ -407,6 +420,10 @@ async def run_agent(
             f"that restricts results to this customer_id = {customer_scope}.\n"
             f"If a table does not have a customer_id column, join it to the relevant table "
             f"that does. NEVER return data for other customers.\n"
+            f"FOR EXTERNAL API TOOLS: Any input parameter that names the customer "
+            f"(customer_id, CUSTOMER_CODE, cust_id, etc.) is pre-filled with "
+            f"'{customer_scope}'. Call the tool directly — DO NOT ask the user for "
+            f"their customer ID, and DO NOT overwrite it with a different value.\n"
             f"IMPORTANT: The customer context is already set to '{display_name}'. "
             f"Do NOT ask the user which customer they mean — all questions refer to this customer.\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -415,11 +432,27 @@ async def run_agent(
         scope_addendum = (
             f"\n\n━━ ADMIN MODE ━━\n"
             f"You are operating in ADMIN mode — unrestricted view across ALL customers.\n"
-            f"Do NOT apply any customer_id filter. Return data for all customers unless "
-            f"the user explicitly names a specific one in their current message.\n"
+            f"For SQL: do NOT apply any customer_id filter. Return data for all customers "
+            f"unless the user explicitly names a specific one in their current message.\n"
+            f"For external API tools that REQUIRE a customer_id: if the user asks a "
+            f"'my/our'-style question without naming a customer, ask them which customer "
+            f"(or subset) they want. If they named a customer, pass that customer's ID "
+            f"into the tool explicitly.\n"
             f"Ignore any customer scope references from prior conversation turns.\n"
             f"━━━━━━━━━━━━━━━━\n"
         )
+
+    # Diagnostic trace — lets admins correlate a question to the scope the
+    # agent actually ran with (and to the resulting API-tool URLs logged by
+    # api_tool_factory below).
+    import logging as _logging
+    _logging.getLogger(__name__).info(
+        "[agent] run question=%r workspace=%s connection=%s scope=%r (%s) "
+        "api_tools=%d mode=%s",
+        (question or "")[:120], workspace_id, connection_id,
+        customer_scope or "admin", customer_scope_name or "-",
+        len(api_tool_configs or []), analysis_mode,
+    )
 
     # Append the execution roadmap to the system prompt
     agent_prompt = system_prompt + scope_addendum + plan_addendum
@@ -436,8 +469,17 @@ async def run_agent(
     )
     llm = get_planner_llm() if use_strong_model else get_agent_llm()
 
-    # Build dynamic API tools for this workspace and merge with built-in tools
-    dynamic_api_tools = build_workspace_api_tools(api_tool_configs) if api_tool_configs else []
+    # Build dynamic API tools for this workspace and merge with built-in tools.
+    # Forward the scope so customer-slot params auto-fill in customer view.
+    dynamic_api_tools = (
+        build_workspace_api_tools(
+            api_tool_configs,
+            workspace_id=workspace_id or "",
+            customer_scope=customer_scope,
+            customer_scope_name=customer_scope_name,
+        )
+        if api_tool_configs else []
+    )
     all_tools = ALL_TOOLS + dynamic_api_tools
     # Track dynamic tool names for result handling
     dynamic_tool_names = {t.name for t in dynamic_api_tools}

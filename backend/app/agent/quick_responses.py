@@ -114,6 +114,21 @@ _DATA_KEYWORDS = [
     "revenue", "sales", "cost", "profit", "growth", "rate",
     "how many", "how much", "what is the", "list all", "give me the",
     "which", "highest", "lowest", "most", "least", "rank",
+    # Hinglish / transliterated-Hindi signals of a data question.
+    # These are common in Indian business users' messages and must NOT
+    # be routed to the cheap conversational model (which has no tools).
+    "kitna", "kitne", "kitni",           # "how much/many"
+    "mera", "meri", "mere", "mujhe",     # "my / to me"
+    "dikhao", "dikhade", "dikha",        # "show"
+    "batao", "bata",                     # "tell"
+    # Language-neutral business/ops nouns — their presence is a strong
+    # signal that this is a data request, regardless of surrounding grammar.
+    "outstanding", "overdue", "pending", "payable", "receivable",
+    "balance", "due", "payment", "receipt",
+    "invoice", "bill", "order", "purchase",
+    "amount", "value",
+    "stock", "inventory", "shipment", "delivery",
+    "status",
 ]
 
 
