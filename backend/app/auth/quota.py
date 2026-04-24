@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from app.auth.user_doc_cache import set_cached_user_doc
 from app.db.insight_db import insight_db
 from app.schemas.persistence import QuotaCheckResult, UsageRecord
+
+logger = logging.getLogger(__name__)
 
 
 async def check_quota(user_doc: dict) -> QuotaCheckResult:
@@ -134,5 +137,7 @@ async def record_usage(
             model_name=model_name,
         )
         usage_logs.create_item(log.model_dump())
-    except Exception:
-        pass  # Don't fail the request if logging fails
+    except Exception as exc:
+        # Don't fail the request if logging fails, but surface the reason —
+        # a silent `pass` here previously hid a schema/column mismatch for weeks.
+        logger.warning("Failed to write usage_logs entry for user=%s: %s", user_id, exc)

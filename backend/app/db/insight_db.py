@@ -117,10 +117,14 @@ CREATE TABLE IF NOT EXISTS usage_logs (
     input_tokens INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     model_name TEXT NOT NULL DEFAULT '',
     timestamp TEXT NOT NULL DEFAULT ''
 );
+ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS cache_read_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS cache_creation_tokens INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_usage_logs_user_id ON usage_logs (user_id);
 
 CREATE TABLE IF NOT EXISTS analytics_events (

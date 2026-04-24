@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from app.auth.user_doc_cache import get_cached_user_doc, set_cached_user_doc
+from app.agent.active_workspaces import record as _record_active_workspace
 from app.agent.chart_recommender import recommend_charts
 from app.agent.graph import run_agent
 from app.agent.models import AgentEvent, AgentEventType
@@ -161,6 +162,9 @@ async def _run_langgraph_pipeline(
     customer_scope_name: str = "",
 ) -> None:
     """Run the LangGraph ReAct agent, pushing events to the SSE queue."""
+    # Note this workspace/connection/mode as "live" so the cache warmer keeps
+    # its prompt prefix hot. Sync, no I/O — chat path latency unchanged.
+    _record_active_workspace(workspace_id, connection_id, analysis_mode)
     try:
         await run_agent(
             question=question,

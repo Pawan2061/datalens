@@ -41,6 +41,18 @@ class Settings(BaseSettings):
     # bound so the flag is a no-op on tiny prompts.
     anthropic_prompt_cache_min_tokens: int = 2048
 
+    # Cache warming: Anthropic's ephemeral prompt cache has a 5-min TTL. For
+    # workspaces with bursty traffic, gaps >5 min force the next request to
+    # repay cache_creation (1.25x input) instead of cache_read (0.1x). A
+    # background loop re-pings the cached prefix with max_tokens=1 on an
+    # interval shorter than the TTL, keeping it hot for real traffic.
+    # Disabled by default — enable per deployment after verifying traffic
+    # patterns make warming cheaper than the avoided cold starts.
+    anthropic_cache_warming_enabled: bool = False
+    anthropic_cache_warming_interval_seconds: int = 240        # < 300s TTL
+    anthropic_cache_warming_active_window_seconds: int = 900   # only warm workspaces active in last 15m
+    anthropic_cache_warming_max_concurrent: int = 2            # bound parallel pings
+
     # Google Gemini (FREE tier for quick mode)
     google_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"

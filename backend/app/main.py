@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.agent import cache_warmer
 from app.api.routes import admin, analytics, chat, connections, health, scope, users, persistence, profiles
 from app.config import settings
 from app.db.connection_manager import connection_manager
@@ -29,8 +30,13 @@ async def lifespan(_app: FastAPI):
     # Restore saved database connections so they survive server restarts
     await connection_manager.restore_connections()
 
+    # Start the Anthropic prompt-cache warmer (no-op unless enabled + anthropic)
+    cache_warmer.start()
+
     yield
-    # Shutdown: nothing to clean up
+
+    # Shutdown
+    await cache_warmer.stop()
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
