@@ -19,6 +19,11 @@ function isReasoning(step: AgentStep): boolean {
   return p?.step === 'reasoning';
 }
 
+/** Format an elapsed-millisecond value as seconds (2 decimals). */
+function formatStepMs(ms: number): string {
+  return `${(ms / 1000).toFixed(2)}s`;
+}
+
 const STEP_CONFIG: Record<string, { icon: typeof Brain; getLabel: (s: AgentStep) => string }> = {
   thinking: {
     icon: Brain,
@@ -50,7 +55,7 @@ const STEP_CONFIG: Record<string, { icon: typeof Brain; getLabel: (s: AgentStep)
       const p = tryParse(s);
       if (!p) return s.content || 'Results received';
       if (p.error) return String(p.error);
-      return `${p.row_count ?? '?'} rows returned (${Math.round(Number(p.duration_ms) || 0)}ms)`;
+      return `${p.row_count ?? '?'} rows returned (${formatStepMs(Number(p.duration_ms) || 0)})`;
     },
   },
   api_call_start: {
@@ -66,7 +71,7 @@ const STEP_CONFIG: Record<string, { icon: typeof Brain; getLabel: (s: AgentStep)
       const p = tryParse(s);
       if (!p) return s.content || 'API response received';
       if (p.error) return `API error: ${p.error}`;
-      return `API: ${p.api_name || 'External'} — ${p.row_count ?? '?'} records (${Math.round(Number(p.duration_ms) || 0)}ms)`;
+      return `API: ${p.api_name || 'External'} — ${p.row_count ?? '?'} records (${formatStepMs(Number(p.duration_ms) || 0)})`;
     },
   },
   consolidating: {
@@ -148,6 +153,13 @@ export default function ThinkingSteps({ steps, isStreaming }: ThinkingStepsProps
               if (p?.error) isError = true;
             }
 
+            // Time the prior phase took: wall-clock gap between this SSE
+            // event and the previous one. Server-measured durations are
+            // already rendered inside specific labels (sub_query_result,
+            // api_call_result), so this pill always shows the gap.
+            const prevTs = i > 0 ? steps[i - 1].timestamp : null;
+            const stepMs = prevTs !== null ? step.timestamp - prevTs : null;
+
             // Determine if this step has expandable detail
             const hasReasoning = isReasoning(step) && step.content.length > 140;
             const hasSql = !!step.sql;
@@ -174,7 +186,12 @@ export default function ThinkingSteps({ steps, isStreaming }: ThinkingStepsProps
                 {/* Content */}
                 <div className="ts-content">
                   <p className={`ts-label ${isError ? 'ts-label--error' : ''} ${isReasoning(step) ? 'ts-label--reasoning' : ''}`}>
-                    {cfg.getLabel(step)}
+                    <span className="ts-label-text">{cfg.getLabel(step)}</span>
+                    {stepMs !== null && stepMs >= 0 && (
+                      <span className="ts-step-time" title="Time since previous step">
+                        {formatStepMs(stepMs)}
+                      </span>
+                    )}
                   </p>
 
                   {/* Expandable section: SQL, full reasoning, or error detail */}

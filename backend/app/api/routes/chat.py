@@ -166,7 +166,7 @@ async def _run_langgraph_pipeline(
     # its prompt prefix hot. Sync, no I/O — chat path latency unchanged.
     _record_active_workspace(workspace_id, connection_id, analysis_mode)
     try:
-        await run_agent(
+        final_result = await run_agent(
             question=question,
             connection_id=connection_id,
             workspace_id=workspace_id,
@@ -178,8 +178,11 @@ async def _run_langgraph_pipeline(
             customer_scope_name=customer_scope_name,
         )
 
-        # Record analytics event
-        _record_analytics(workspace_id, user_id, question, connection_id, analysis_mode)
+        # Record analytics event (includes per-step timings)
+        _record_analytics(
+            workspace_id, user_id, question, connection_id, analysis_mode,
+            final_result=final_result or {},
+        )
 
     except Exception as e:
         raw = str(e)
@@ -199,8 +202,14 @@ async def _run_langgraph_pipeline(
 def _record_analytics(
     workspace_id: str, user_id: str, question: str,
     connection_id: str, analysis_mode: str,
+    final_result: dict | None = None,
 ):
-    """Fire-and-forget analytics event recording."""
+    """Fire-and-forget analytics event recording.
+
+    ``final_result`` is the InsightResult dict returned by ``run_agent``; its
+    ``execution_metadata`` carries the per-step timings, token usage, and cost
+    that we persist alongside the query for later analysis (Excel export, etc.).
+    """
     try:
         from app.db.insight_db import insight_db
         if not insight_db.is_ready:
@@ -219,6 +228,8 @@ def _record_analytics(
                 if res:
                     user_email = res[0].get("email", "")
 
+        meta = (final_result or {}).get("execution_metadata", {}) or {}
+
         from app.schemas.persistence import AnalyticsEvent
         event = AnalyticsEvent(
             workspace_id=workspace_id,
@@ -228,6 +239,14 @@ def _record_analytics(
             query_text=question[:500],  # truncate long questions
             connection_id=connection_id,
             analysis_mode=analysis_mode,
+            tokens_used=meta.get("total_tokens", 0),
+            cost_usd=meta.get("estimated_cost_usd", 0.0),
+            duration_ms=meta.get("total_duration_ms", 0.0),
+            model_name=meta.get("model_name", ""),
+            step_timings=meta.get("step_timings", {}) or {},
+            sub_query_count=meta.get("sub_query_count", 0),
+            total_rows=meta.get("total_rows", 0),
+            cached=bool(meta.get("cached", False)),
         )
         container = insight_db.container("analytics_events")
         container.create_item(event.model_dump())

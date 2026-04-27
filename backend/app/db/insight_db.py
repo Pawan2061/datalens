@@ -22,6 +22,7 @@ _JSONB_COLS: dict[str, set[str]] = {
     "canvas_states": {"blocks"},
     "connections": {"config"},
     "workspace_profiles": {"raw_profile"},
+    "analytics_events": {"step_timings"},
 }
 
 # ---------------------------------------------------------------------------
@@ -142,6 +143,10 @@ CREATE TABLE IF NOT EXISTS analytics_events (
     model_name TEXT NOT NULL DEFAULT '',
     timestamp TEXT NOT NULL DEFAULT ''
 );
+ALTER TABLE analytics_events ADD COLUMN IF NOT EXISTS step_timings JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE analytics_events ADD COLUMN IF NOT EXISTS sub_query_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE analytics_events ADD COLUMN IF NOT EXISTS total_rows INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE analytics_events ADD COLUMN IF NOT EXISTS cached BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_analytics_events_workspace_id ON analytics_events (workspace_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_timestamp ON analytics_events (timestamp);
 """

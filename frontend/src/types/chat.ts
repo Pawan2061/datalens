@@ -60,6 +60,8 @@ export interface ExecutionMetadata {
   // `cached` = in-app ResponseCache hit (whole LLM pipeline skipped).
   // Prompt-cache reuse is reflected in cache_read_tokens, not here.
   cached?: boolean;
+  // Per-step latency breakdown in ms (e.g. {"agent_loop": 4321.0}).
+  step_timings?: Record<string, number>;
 }
 
 export interface InsightResult {

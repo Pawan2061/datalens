@@ -219,4 +219,10 @@ class AnalyticsEvent(BaseModel):
     cost_usd: float = 0.0
     duration_ms: float = 0.0
     model_name: str = ""
+    # Per-step latency breakdown (e.g. {"agent_loop": 4321.0, "synthesis": 980.5}).
+    # Empty dict for older events that pre-date this field.
+    step_timings: dict[str, float] = {}
+    sub_query_count: int = 0
+    total_rows: int = 0
+    cached: bool = False
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

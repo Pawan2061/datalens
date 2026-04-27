@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import AsyncGenerator
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
@@ -11,6 +10,7 @@ from langgraph.prebuilt import create_react_agent
 from app.agent.models import AgentEvent, AgentEventType
 from app.agent.prompts import build_system_prompt
 from app.agent.schema_cache import schema_cache
+from app.agent.step_timer import StepTimer
 from app.config import settings
 from app.agent.api_tool_cache import (
     get_cached_workspace_api_tools,
@@ -227,36 +227,42 @@ async def run_agent(
     user_id: str = "",
     customer_scope: str = "",
     customer_scope_name: str = "",
-) -> AsyncGenerator[AgentEvent, None]:
-    """Run the LangGraph ReAct agent and yield SSE events.
+) -> dict | None:
+    """Run the LangGraph ReAct agent and stream SSE events.
 
-    If a queue is provided, events are also pushed to the queue for the
-    SSE streaming endpoint.
+    Events are pushed to ``queue`` for the SSE streaming endpoint.  The final
+    InsightResult dict is also returned so callers (e.g. the chat route) can
+    persist it without having to re-read the queue.
     """
     start_time = time.perf_counter()
+    timer = StepTimer()
 
     # ── Quick response check (saves LLM call entirely) ───────────
     from app.agent.quick_responses import detect_quick_response, response_cache
 
-    quick = detect_quick_response(question)
+    with timer.step("quick_response_check"):
+        quick = detect_quick_response(question)
     if quick:
         total_duration = (time.perf_counter() - start_time) * 1000
-        final = _build_conversational_result(quick, total_duration)
+        final = _build_conversational_result(
+            quick, total_duration, step_timings=timer.as_dict(),
+        )
         await _emit(queue, AgentEventType.final_result, final)
         await _emit_done(queue)
-        return
+        return final
 
     # ── Response cache check ─────────────────────────────────────
     # Cache key MUST include scope/mode/tables — otherwise admin answers
     # can be served to a scoped customer view (data leak) and quick/deep
     # results collide with each other.
-    cached = response_cache.get(
-        question,
-        connection_id,
-        customer_scope=customer_scope,
-        analysis_mode=analysis_mode,
-        selected_tables=selected_tables,
-    )
+    with timer.step("cache_lookup"):
+        cached = response_cache.get(
+            question,
+            connection_id,
+            customer_scope=customer_scope,
+            analysis_mode=analysis_mode,
+            selected_tables=selected_tables,
+        )
     if cached:
         await _emit(queue, AgentEventType.thinking, {
             "step": "cache_hit",
@@ -270,9 +276,10 @@ async def run_agent(
                 (time.perf_counter() - start_time) * 1000, 2
             )
             cached_copy["execution_metadata"]["cached"] = True
+            cached_copy["execution_metadata"]["step_timings"] = timer.as_dict()
         await _emit(queue, AgentEventType.final_result, cached_copy)
         await _emit_done(queue)
-        return
+        return cached_copy
 
     # ── Chit-chat → cheap model (Haiku) ─────────────────────────────
     from app.agent.quick_responses import is_conversational
@@ -288,11 +295,15 @@ async def run_agent(
             "content": "Processing your message...",
         })
         try:
-            response_text = await _run_cheap_conversational(
-                question, connection_id, workspace_id, history,
-            )
+            with timer.step("conversational_path"):
+                response_text = await _run_cheap_conversational(
+                    question, connection_id, workspace_id, history,
+                )
             total_duration = (time.perf_counter() - start_time) * 1000
-            final = _build_conversational_result(response_text, total_duration)
+            final = _build_conversational_result(
+                response_text, total_duration,
+                step_timings=timer.as_dict(),
+            )
             response_cache.put(
                 question,
                 connection_id,
@@ -303,7 +314,7 @@ async def run_agent(
             )
             await _emit(queue, AgentEventType.final_result, final)
             await _emit_done(queue)
-            return
+            return final
         except Exception:
             pass  # Fall through to full agent if cheap model fails
 
@@ -355,17 +366,19 @@ async def run_agent(
             except Exception:
                 return []  # API tools are optional — don't block analysis
 
-        profile_doc, api_tool_configs, schema_text = await asyncio.gather(
-            load_profile(workspace_id, connection_id),
-            _load_api_tools(),
-            schema_cache.get(connection_id),  # Speculative — free when cached
-        )
+        with timer.step("schema_profile_load"):
+            profile_doc, api_tool_configs, schema_text = await asyncio.gather(
+                load_profile(workspace_id, connection_id),
+                _load_api_tools(),
+                schema_cache.get(connection_id),  # Speculative — free when cached
+            )
         if profile_doc and profile_doc.status == "ready" and profile_doc.profile_text:
             profile_text = profile_doc.profile_text
             schema_text = ""  # Profile takes precedence — discard preloaded schema
     else:
         # No workspace context — load schema directly
-        schema_text = await schema_cache.get(connection_id)
+        with timer.step("schema_profile_load"):
+            schema_text = await schema_cache.get(connection_id)
 
     # Build system prompt
     system_prompt = build_system_prompt(
@@ -399,7 +412,8 @@ async def run_agent(
     try:
         from app.agent.pre_planner import pre_plan, format_plan_for_agent
         schema_for_plan = profile_text or schema_text
-        plan = await pre_plan(question, schema_for_plan)
+        with timer.step("pre_plan"):
+            plan = await pre_plan(question, schema_for_plan)
         if plan:
             plan_addendum = format_plan_for_agent(plan)
             await _emit(queue, AgentEventType.thinking, {
@@ -539,6 +553,7 @@ async def run_agent(
             conversation.append((role, h.get("content", "")))
     conversation.append(("human", question))
 
+    agent_loop_start = time.perf_counter()
     try:
      async for chunk in graph.astream(
         {"messages": conversation},
@@ -571,7 +586,41 @@ async def run_agent(
                         })
                         # Signal end — the frontend will show the question
                         await _emit_done(queue)
-                        return
+                        # Record what we have so the analytics row carries
+                        # real duration / token / step-timing data instead of
+                        # silently saving zeros.
+                        timer.add(
+                            "agent_loop",
+                            (time.perf_counter() - agent_loop_start) * 1000,
+                        )
+                        clarification_total = (time.perf_counter() - start_time) * 1000
+                        return {
+                            "summary": {
+                                "title": "Clarification requested",
+                                "narrative": clarification_text,
+                                "key_findings": [],
+                                "follow_up_questions": [],
+                            },
+                            "charts": [],
+                            "tables": [],
+                            "execution_metadata": {
+                                "total_duration_ms": round(clarification_total, 2),
+                                "sub_query_count": sub_query_index,
+                                "total_rows": 0,
+                                "input_tokens": total_input_tokens,
+                                "output_tokens": total_output_tokens,
+                                "total_tokens": total_input_tokens + total_output_tokens,
+                                "cache_read_tokens": total_cache_read_tokens,
+                                "cache_creation_tokens": total_cache_creation_tokens,
+                                "model_name": model_name,
+                                "estimated_cost_usd": _estimate_cost(
+                                    total_input_tokens, total_output_tokens, model_name,
+                                    cache_read_tokens=total_cache_read_tokens,
+                                    cache_creation_tokens=total_cache_creation_tokens,
+                                ),
+                                "step_timings": timer.as_dict(),
+                            },
+                        }
 
                     elif tool_name == "execute_sql":
                         try:
@@ -698,6 +747,7 @@ async def run_agent(
         logger = logging.getLogger(__name__)
         logger.error("Agent execution error: %s", agent_err, exc_info=True)
         err_str = str(agent_err)[:200]
+        timer.add("agent_loop", (time.perf_counter() - agent_loop_start) * 1000)
 
         # If we have ANY sub-results, fall through to build partial results
         if all_sub_results:
@@ -717,7 +767,7 @@ async def run_agent(
             elif "context" in err_str.lower() or "token" in err_str.lower():
                 error_hint = "The question required too much context. Try asking a more focused question."
 
-            await _emit(queue, AgentEventType.final_result, {
+            partial = {
                 "summary": {
                     "title": "Analysis Incomplete",
                     "narrative": (
@@ -745,55 +795,68 @@ async def run_agent(
                     "cache_creation_tokens": total_cache_creation_tokens,
                     "model_name": model_name,
                     "estimated_cost_usd": 0.0,
+                    "step_timings": timer.as_dict(),
                 },
-            })
+            }
+            await _emit(queue, AgentEventType.final_result, partial)
             await _emit_done(queue)
-            return
+            return partial
         # Fall through to build partial results from whatever we collected
+    else:
+        timer.add("agent_loop", (time.perf_counter() - agent_loop_start) * 1000)
 
     # ── Streaming synthesis (runs after the agent finishes all SQL) ──
     # analyze_results is no longer an agent tool — synthesis runs here so
     # we can stream the narrative token-by-token before the final result.
     if all_sub_results and not synthesis_output:
         try:
-            synthesis_output = await _stream_synthesis(
-                question, all_sub_results, queue, plan=plan
-            )
+            with timer.step("synthesis"):
+                synthesis_output = await _stream_synthesis(
+                    question, all_sub_results, queue, plan=plan
+                )
         except Exception:
             pass  # Synthesis failure → heuristic fallback in _build_final_result
 
     # ── Build final result ───────────────────────────────────────────
     total_duration = (time.perf_counter() - start_time) * 1000
 
-    # If no queries were executed, the agent responded conversationally
-    if sub_query_index == 0 and agent_final_text:
-        final_result = _build_conversational_result(
-            agent_final_text, total_duration,
-            input_tokens=total_input_tokens,
-            output_tokens=total_output_tokens,
-            cache_read_tokens=total_cache_read_tokens,
-            cache_creation_tokens=total_cache_creation_tokens,
-            model_name=model_name,
-        )
-    else:
-        # Standard analysis path — use synthesis + chart outputs from agent tools
-        # Safety net: if the agent skipped recommend_charts_tool but has data,
-        # the heuristic fallback inside _build_final_result will generate charts.
-        final_result = _build_final_result(
-            all_sub_results, total_duration,
-            synthesis=synthesis_output,
-            agent_charts=agent_chart_recs,
-            agent_narrative=agent_final_text,
-            input_tokens=total_input_tokens,
-            output_tokens=total_output_tokens,
-            cache_read_tokens=total_cache_read_tokens,
-            cache_creation_tokens=total_cache_creation_tokens,
-            model_name=model_name,
-        )
+    with timer.step("build_result"):
+        # If no queries were executed, the agent responded conversationally
+        if sub_query_index == 0 and agent_final_text:
+            final_result = _build_conversational_result(
+                agent_final_text, total_duration,
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                cache_read_tokens=total_cache_read_tokens,
+                cache_creation_tokens=total_cache_creation_tokens,
+                model_name=model_name,
+                step_timings=timer.as_dict(),
+            )
+        else:
+            # Standard analysis path — use synthesis + chart outputs from agent tools
+            # Safety net: if the agent skipped recommend_charts_tool but has data,
+            # the heuristic fallback inside _build_final_result will generate charts.
+            final_result = _build_final_result(
+                all_sub_results, total_duration,
+                synthesis=synthesis_output,
+                agent_charts=agent_chart_recs,
+                agent_narrative=agent_final_text,
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                cache_read_tokens=total_cache_read_tokens,
+                cache_creation_tokens=total_cache_creation_tokens,
+                model_name=model_name,
+                step_timings=timer.as_dict(),
+            )
 
     # ── Guardrail Layer 4: Response guard ────────────────────────
     from app.guardrails.response_guard import scrub_insight_result
-    final_result = scrub_insight_result(final_result)
+    with timer.step("response_guard"):
+        final_result = scrub_insight_result(final_result)
+
+    # Update step_timings to include build_result + response_guard.
+    if "execution_metadata" in final_result:
+        final_result["execution_metadata"]["step_timings"] = timer.as_dict()
 
     # Cache the result for future similar questions.
     # Scope/mode/tables MUST be part of the key — see ResponseCache._normalize.
@@ -828,6 +891,7 @@ async def run_agent(
             pass  # Don't fail chat if usage recording fails
 
     await _emit_done(queue)
+    return final_result
 
 
 def _build_conversational_result(
@@ -838,6 +902,7 @@ def _build_conversational_result(
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
     model_name: str = "",
+    step_timings: dict[str, float] | None = None,
 ) -> dict:
     """Build an InsightResult for conversational (non-query) responses.
 
@@ -963,6 +1028,7 @@ def _build_conversational_result(
             cache_read_tokens=cache_read_tokens,
             cache_creation_tokens=cache_creation_tokens,
         ),
+        step_timings=step_timings or {},
     )
 
     result = InsightResult(
@@ -985,6 +1051,7 @@ def _build_final_result(
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
     model_name: str = "",
+    step_timings: dict[str, float] | None = None,
 ) -> dict:
     """Build an InsightResult-compatible dict from collected sub-query results.
 
@@ -1192,6 +1259,7 @@ def _build_final_result(
             cache_read_tokens=cache_read_tokens,
             cache_creation_tokens=cache_creation_tokens,
         ),
+        step_timings=step_timings or {},
     )
 
     result = InsightResult(

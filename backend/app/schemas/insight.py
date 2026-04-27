@@ -98,6 +98,9 @@ class ExecutionMetadata(BaseModel):
     # It is NOT the Anthropic prompt cache — those savings are reported via
     # cache_read_tokens / cache_creation_tokens above.
     cached: bool = False
+    # Per-step latency breakdown in ms (e.g. {"schema_load": 120.5, "agent_loop": 4321.0}).
+    # Empty when the request was served from cache or never went through the agent.
+    step_timings: dict[str, float] = {}
 
 
 class InsightResult(BaseModel):
