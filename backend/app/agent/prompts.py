@@ -22,48 +22,50 @@ _REVENUE_STANDARD_NOTES = """\
 REVENUE / SALES CALCULATION STANDARD (MANDATORY — apply consistently):
 - "sales", "revenue", "turnover", "billing", "income" are SYNONYMS. Treat them
   identically and use the same deduplicated base for every derived metric.
-- REVENUE FORMULA (GROSS — taxes and courier charges INCLUDED by default):
-      revenue = inv_amount
-  `inv_amount` already includes CGST + SGST + IGST + courier_charges, so
-  this is the default reported figure for "sales / revenue / turnover /
-  billing / income" — even when the user does not explicitly say "gross"
-  or "with tax". Do NOT subtract taxes or courier charges unless the user
-  explicitly asks for "net revenue", "ex-GST", "pre-tax", "taxable value",
-  or similar.
+- REVENUE FORMULA (NET — exclusive of GST and courier charges):
+      revenue = inv_amount - cgst_amt - sgst_amt - igst_amt - courier_charges
+  This is THE default for every revenue/sales question — no need for the user
+  to say "net", "ex-GST", or "pre-tax". Always subtract the four pass-through
+  components from `inv_amount`. Treat NULLs as 0 via COALESCE — intra-state
+  invoices have IGST = NULL/0, inter-state invoices have CGST/SGST = NULL/0,
+  and many invoices have no courier charges.
+- ONLY deviate from this formula if the user EXPLICITLY asks for "gross",
+  "with tax", "billed amount", or "invoice value" — in that case report
+  `SUM(inv_amount)` and label it "gross / tax-inclusive".
 - UNIT OF TRUTH: one invoice = one unit. NEVER double-count line items.
 - Invoice/transaction tables have multiple rows per document (one per line
   item). The header-level columns `inv_amount`, `cgst_amt`, `sgst_amt`,
   `igst_amt`, and `courier_charges` are repeated identically on every line
-  of the same invoice — raw SUM() overcounts them by the line-item count.
-  These MUST be deduplicated to one row per invoice before aggregating.
-- MANDATORY PATTERN — deduplicate to ONE row per invoice BEFORE aggregating:
+  of the same invoice — raw SUM() overcounts each by the line-item count.
+  ALL FIVE columns MUST be deduplicated to one row per invoice before any
+  aggregation.
+- MANDATORY PATTERN — dedupe ALL 5 fields, then compute net revenue:
     WITH base AS (
-        SELECT invoice_id,
-               MAX(inv_amount)                 AS inv_amount,
+        SELECT invoice_no,
+               MAX(inv_amount)                  AS inv_amount,
                MAX(COALESCE(cgst_amt,0))        AS cgst_amt,
                MAX(COALESCE(sgst_amt,0))        AS sgst_amt,
                MAX(COALESCE(igst_amt,0))        AS igst_amt,
                MAX(COALESCE(courier_charges,0)) AS courier_charges,
                MAX(customer_id)                 AS customer_id,
                MAX(invoice_date)                AS invoice_date
-        FROM invoice_tbl
-        GROUP BY invoice_id
+        FROM invoice
+        GROUP BY invoice_no
     )
-    SELECT COUNT(*)         AS invoice_cnt,
-           SUM(inv_amount) AS total_revenue,       -- gross, default
-           AVG(inv_amount) AS avg_invoice_value
+    SELECT COUNT(*) AS invoice_cnt,
+           SUM(inv_amount - cgst_amt - sgst_amt - igst_amt - courier_charges) AS total_revenue,
+           AVG(inv_amount - cgst_amt - sgst_amt - igst_amt - courier_charges) AS avg_invoice_value
     FROM base;
 - Reuse this `base` CTE as the foundation for ALL revenue metrics in the
   same question: totals, averages, growth rates, comparisons, top-N,
   customer rollups, time-series trends. This keeps numbers reconcilable.
-- NET / EX-GST VARIANT (only when the user explicitly asks for it):
-      net_revenue = inv_amount - cgst_amt - sgst_amt - igst_amt - courier_charges
-  Compute this from the same `base` CTE — never re-aggregate from raw rows.
-  Label it clearly as "net of GST and courier" in the response.
+- If a workspace playbook template only deducts a subset (or none) of these
+  columns, the REVENUE STANDARD wins — apply the full 4-column subtraction
+  inside the dedup CTE before reporting `total_revenue`.
 - EXCEPTION: columns that are intrinsically line-level (unit_price, line_qty,
   item_amount, line_total) SUM correctly on raw rows — no CTE needed.
 - When the profile marks a table as LINE-ITEM TABLE or names the canonical
-  invoice_id, follow that guidance exactly — it is the single source of truth.
+  invoice_no, follow that guidance exactly — it is the single source of truth.
 """
 
 _VALIDATION_NOTES = """\
