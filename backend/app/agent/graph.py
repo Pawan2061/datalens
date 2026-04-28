@@ -31,6 +31,22 @@ ALL_TOOLS = [
     execute_sql,
 ]
 
+def _cache_creation_from(details: dict) -> int:
+    """Extract cache-write tokens from a LangChain ``input_token_details`` dict.
+
+    langchain-anthropic >=1.4 zeroes out ``cache_creation`` whenever the API
+    returned a TTL breakdown and instead reports counts under
+    ``ephemeral_5m_input_tokens`` / ``ephemeral_1h_input_tokens``. The library
+    guarantees the generic key is 0 when the TTL keys are populated, so summing
+    all three is safe and works across both response shapes.
+    """
+    return (
+        (details.get("cache_creation") or 0)
+        + (details.get("ephemeral_5m_input_tokens") or 0)
+        + (details.get("ephemeral_1h_input_tokens") or 0)
+    )
+
+
 # ── Streaming synthesis ───────────────────────────────────────────────
 # Separator between narrative and metadata JSON in the LLM output.
 _STREAM_SEP = "===METADATA==="
@@ -572,7 +588,7 @@ async def run_agent(
                         total_output_tokens += um.get('output_tokens', 0)
                         details = um.get('input_token_details') or {}
                         total_cache_read_tokens += details.get('cache_read', 0) or 0
-                        total_cache_creation_tokens += details.get('cache_creation', 0) or 0
+                        total_cache_creation_tokens += _cache_creation_from(details)
                         if not model_name and hasattr(msg, 'response_metadata'):
                             model_name = msg.response_metadata.get('model', '') or msg.response_metadata.get('model_name', '')
                     tool_name = getattr(msg, "name", "")
@@ -696,7 +712,7 @@ async def run_agent(
                         total_output_tokens += um.get('output_tokens', 0)
                         details = um.get('input_token_details') or {}
                         total_cache_read_tokens += details.get('cache_read', 0) or 0
-                        total_cache_creation_tokens += details.get('cache_creation', 0) or 0
+                        total_cache_creation_tokens += _cache_creation_from(details)
                         if not model_name and hasattr(msg, 'response_metadata'):
                             model_name = msg.response_metadata.get('model', '') or msg.response_metadata.get('model_name', '')
                     text = getattr(msg, "content", "")
@@ -1416,35 +1432,44 @@ def _estimate_cost(
 ) -> float:
     """Estimate USD cost based on token counts and model.
 
-    Anthropic prompt-cache multipliers: cache writes are billed at 1.25x the
-    input rate, cache reads at 0.10x. For non-Anthropic providers these
-    kwargs default to 0, so pricing behavior is unchanged.
+    ``input_tokens`` from langchain-anthropic is the *true* total
+    (fresh + cache_read + cache_creation), so we subtract the cache portions
+    before applying the 1x input price, then bill cache reads at 0.10x and
+    cache writes at 1.25x. For non-Anthropic providers cache kwargs default
+    to 0, so the formula collapses to fresh × input.
     """
-    # Pricing per 1M tokens (approximate)
-    _PRICING = {
-        "claude-sonnet-4-5": {"input": 3.0, "output": 15.0},
-        "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0},
-        "claude-haiku-4-5": {"input": 0.8, "output": 4.0},
-        "claude-opus-4-0": {"input": 15.0, "output": 75.0},
-        "gpt-4o": {"input": 2.5, "output": 10.0},
-        "gpt-4.1-mini": {"input": 0.4, "output": 1.6},
-        "gemini-2.0-flash": {"input": 0.0, "output": 0.0},  # FREE tier
-        "gemini-2.5-flash": {"input": 0.0, "output": 0.0},  # FREE tier
-        "gemini": {"input": 0.0, "output": 0.0},  # FREE tier fallback
-    }
-    # Find matching pricing
-    pricing = None
-    model_lower = model_name.lower()
-    for key, p in _PRICING.items():
-        if key in model_lower:
-            pricing = p
-            break
-    if not pricing:
-        # Default: assume cheap model
-        pricing = {"input": 1.0, "output": 5.0}
+    # Pricing per 1M tokens — sourced from
+    # https://platform.claude.com/docs/en/about-claude/pricing.
+    # Order matters: longer/more-specific keys first so e.g. "claude-opus-4-7"
+    # wins over a shorter "claude-opus" prefix.
+    _PRICING = (
+        ("claude-sonnet-4-6", {"input": 3.0, "output": 15.0}),
+        ("claude-sonnet-4-5", {"input": 3.0, "output": 15.0}),
+        ("claude-sonnet-4-20250514", {"input": 3.0, "output": 15.0}),
+        ("claude-sonnet-4", {"input": 3.0, "output": 15.0}),
+        ("claude-opus-4-7", {"input": 5.0, "output": 25.0}),
+        ("claude-opus-4-6", {"input": 5.0, "output": 25.0}),
+        ("claude-opus-4-5", {"input": 5.0, "output": 25.0}),
+        ("claude-opus-4-1", {"input": 15.0, "output": 75.0}),
+        ("claude-opus-4-0", {"input": 15.0, "output": 75.0}),
+        ("claude-opus-4", {"input": 15.0, "output": 75.0}),
+        ("claude-haiku-4-5", {"input": 1.0, "output": 5.0}),
+        ("claude-haiku-3-5", {"input": 0.8, "output": 4.0}),
+        ("gpt-4o", {"input": 2.5, "output": 10.0}),
+        ("gpt-4.1-mini", {"input": 0.4, "output": 1.6}),
+        ("gemini-2.0-flash", {"input": 0.0, "output": 0.0}),
+        ("gemini-2.5-flash", {"input": 0.0, "output": 0.0}),
+        ("gemini", {"input": 0.0, "output": 0.0}),
+    )
+    model_lower = (model_name or "").lower()
+    pricing = next(
+        (p for key, p in _PRICING if key in model_lower),
+        {"input": 1.0, "output": 5.0},
+    )
 
+    fresh_input = max(input_tokens - cache_read_tokens - cache_creation_tokens, 0)
     cost = (
-        (input_tokens * pricing["input"] / 1_000_000)
+        (fresh_input * pricing["input"] / 1_000_000)
         + (output_tokens * pricing["output"] / 1_000_000)
         + (cache_creation_tokens * pricing["input"] * 1.25 / 1_000_000)
         + (cache_read_tokens * pricing["input"] * 0.10 / 1_000_000)

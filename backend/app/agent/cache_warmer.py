@@ -161,13 +161,21 @@ async def _warm_one(target: WarmTarget, sem: asyncio.Semaphore) -> None:
             # warmer is actually hitting the same cache entry real requests use.
             um = getattr(resp, "usage_metadata", None) or {}
             details = um.get("input_token_details") or {}
+            # langchain-anthropic >=1.4 zeroes `cache_creation` and reports
+            # writes under `ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens`
+            # when the API returns a TTL breakdown. Sum all three.
+            cache_create = (
+                (details.get("cache_creation") or 0)
+                + (details.get("ephemeral_5m_input_tokens") or 0)
+                + (details.get("ephemeral_1h_input_tokens") or 0)
+            )
             logger.info(
                 "[cache-warmer] ws=%s conn=%s mode=%s read=%d create=%d input=%d",
                 target.workspace_id,
                 target.connection_id,
                 target.analysis_mode,
                 details.get("cache_read", 0) or 0,
-                details.get("cache_creation", 0) or 0,
+                cache_create,
                 um.get("input_tokens", 0),
             )
         except Exception as exc:

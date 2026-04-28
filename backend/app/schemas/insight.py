@@ -84,9 +84,11 @@ class ExecutionMetadata(BaseModel):
     total_duration_ms: float
     sub_query_count: int
     total_rows: int
-    # Token usage tracking
-    # input_tokens excludes cache hits — it's the fresh (billable at 1x) input.
-    # cache_read_tokens are billed at 0.1x; cache_creation_tokens at 1.25x.
+    # Token usage tracking. Semantics follow langchain-anthropic's
+    # ``usage_metadata.input_tokens``: this is the *total* input
+    # (fresh + cache_read + cache_creation), not fresh-only. Subtract the
+    # two cache columns to recover fresh tokens. Billing rates: fresh @ 1x,
+    # cache_read @ 0.1x, cache_creation @ 1.25x of the model's input price.
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
