@@ -23,7 +23,7 @@ REVENUE / SALES CALCULATION STANDARD (MANDATORY — apply consistently):
 - "sales", "revenue", "turnover", "billing", "income" are SYNONYMS. Treat them
   identically and use the same deduplicated base for every derived metric.
 - REVENUE FORMULA (NET — exclusive of GST and courier charges):
-      revenue = inv_amount - cgst_amt - sgst_amt - igst_amt - courier_charges
+      revenue = inv_amount - cgst_amt_total - sgst_amt_total - igst_amt_total - courier_charges
   This is THE default for every revenue/sales question — no need for the user
   to say "net", "ex-GST", or "pre-tax". Always subtract the four pass-through
   components from `inv_amount`. Treat NULLs as 0 via COALESCE — intra-state
@@ -34,8 +34,8 @@ REVENUE / SALES CALCULATION STANDARD (MANDATORY — apply consistently):
   `SUM(inv_amount)` and label it "gross / tax-inclusive".
 - UNIT OF TRUTH: one invoice = one unit. NEVER double-count line items.
 - Invoice/transaction tables have multiple rows per document (one per line
-  item). The header-level columns `inv_amount`, `cgst_amt`, `sgst_amt`,
-  `igst_amt`, and `courier_charges` are repeated identically on every line
+  item). The header-level columns `inv_amount`, `cgst_amt_total`, `sgst_amt_total`,
+  `igst_amt_total`, and `courier_charges` are repeated identically on every line
   of the same invoice — raw SUM() overcounts each by the line-item count.
   ALL FIVE columns MUST be deduplicated to one row per invoice before any
   aggregation.
@@ -43,9 +43,9 @@ REVENUE / SALES CALCULATION STANDARD (MANDATORY — apply consistently):
     WITH base AS (
         SELECT invoice_no,
                MAX(inv_amount)                  AS inv_amount,
-               MAX(COALESCE(cgst_amt,0))        AS cgst_amt,
-               MAX(COALESCE(sgst_amt,0))        AS sgst_amt,
-               MAX(COALESCE(igst_amt,0))        AS igst_amt,
+               MAX(COALESCE(cgst_amt_total,0))        AS cgst_amt_total,
+               MAX(COALESCE(sgst_amt_total,0))        AS sgst_amt_total,
+               MAX(COALESCE(igst_amt_total,0))        AS igst_amt_total,
                MAX(COALESCE(courier_charges,0)) AS courier_charges,
                MAX(customer_id)                 AS customer_id,
                MAX(invoice_date)                AS invoice_date
@@ -53,8 +53,8 @@ REVENUE / SALES CALCULATION STANDARD (MANDATORY — apply consistently):
         GROUP BY invoice_no
     )
     SELECT COUNT(*) AS invoice_cnt,
-           SUM(inv_amount - cgst_amt - sgst_amt - igst_amt - courier_charges) AS total_revenue,
-           AVG(inv_amount - cgst_amt - sgst_amt - igst_amt - courier_charges) AS avg_invoice_value
+           SUM(inv_amount - cgst_amt_total - sgst_amt_total - igst_amt_total - courier_charges) AS total_revenue,
+           AVG(inv_amount - cgst_amt_total - sgst_amt_total - igst_amt_total - courier_charges) AS avg_invoice_value
     FROM base;
 - Reuse this `base` CTE as the foundation for ALL revenue metrics in the
   same question: totals, averages, growth rates, comparisons, top-N,
