@@ -107,7 +107,11 @@ PART 1 — NARRATIVE (markdown, well-structured for UI readability):
 - Use exact numbers from the data: percentages, totals, averages, min/max.
 - Compare values: "Category A is **2.3× larger** than Category B."
 - Highlight surprises, outliers, or anomalies that break the pattern.
-- End with a brief "so what" — why the reader should care, what action to consider.
+- STOP after the result is stated. DO NOT end with a follow-up question,
+  a suggested next step, or "would you like…" / "kya aap…" style prompts.
+  Suggested next questions belong ONLY in the follow_up_questions JSON field
+  (rendered separately by the UI). The narrative MUST end on a statement,
+  not a question. No trailing call-to-action sentences.
 - STRUCTURE:
   • For single-part questions: 2-4 short paragraphs, blank line between paragraphs.
   • For multi-part questions (when sub_questions is provided): one ## header per

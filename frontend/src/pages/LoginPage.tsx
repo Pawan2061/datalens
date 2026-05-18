@@ -24,7 +24,7 @@ export default function LoginPage() {
       if (user.status === 'pending' || user.status === 'suspended') {
         navigate('/pending', { replace: true });
       } else {
-        navigate('/', { replace: true });
+        navigate('/workspace/ws-9f8c278c', { replace: true });
       }
     }
   }, [isAuthenticated, user, navigate]);
