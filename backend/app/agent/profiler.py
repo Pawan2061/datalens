@@ -935,11 +935,20 @@ def _format_profile_text(profile: DataProfile, connector_type: str) -> str:
     sections.append(f"# DATA ANALYSIS PLAN ({connector_type})")
     sections.append("")
 
-    if profile.executive_summary:
-        summary = profile.executive_summary[:400]
-        if len(profile.executive_summary) > 400:
-            summary = summary.rsplit(".", 1)[0] + "."
-        sections.append(summary)
+    # Executive summary and data architecture are user-curated business
+    # context (product naming, domain rules, join paths). They override
+    # the LLM's defaults — render them in full, not as a truncated blurb.
+    has_business_context = bool(
+        (profile.executive_summary or "").strip()
+        or (profile.data_architecture or "").strip()
+    )
+    if has_business_context:
+        sections.append("## Business Context (authoritative — follow exactly)")
+        if profile.executive_summary.strip():
+            sections.append(profile.executive_summary.strip())
+            sections.append("")
+        if profile.data_architecture.strip():
+            sections.append(profile.data_architecture.strip())
         sections.append("")
 
     # ── Filter to business tables ─────────────────────────────────────
@@ -952,9 +961,11 @@ def _format_profile_text(profile: DataProfile, connector_type: str) -> str:
     for tp in biz_tables:
         desc = ""
         if tp.business_summary:
-            first = tp.business_summary.split(".")[0].strip()
-            if first:
-                desc = f" — {first}"
+            summary = tp.business_summary.strip()
+            if len(summary) > 240:
+                summary = summary[:240].rsplit(" ", 1)[0] + "…"
+            if summary:
+                desc = f" — {summary}"
         sections.append(f"- **{tp.name}** ({tp.row_count:,} rows){desc}")
     sections.append("")
 
