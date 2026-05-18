@@ -77,8 +77,8 @@ export default function TextSummary({ summary, onFollowUp, isConversational }: T
         </div>
       )}
 
-      {/* Follow-up Questions */}
-      {summary.follow_up_questions && summary.follow_up_questions.length > 0 && onFollowUp && (
+      {/* Follow-up Questions — TEMP: hidden, flip `false &&` back to restore */}
+      {false && summary.follow_up_questions && summary.follow_up_questions.length > 0 && onFollowUp && (
         <div className="txs-followup">
           <h4 className="txs-followup-header">
             {isWelcome ? 'Try asking' : 'Explore further'}

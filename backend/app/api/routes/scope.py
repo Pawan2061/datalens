@@ -16,9 +16,8 @@ async def list_customers(
     id_col: str = Query("customer_id", description="Customer ID column"),
     name_col: str = Query("customer_name", description="Customer name column"),
     code_col: str = Query("customer_code", description="Customer code column"),
-    limit: int = Query(500, le=2000, description="Max customers to return"),
 ):
-    """Return distinct customers from the invoice table.
+    """Return every distinct customer from the invoice table.
 
     Defaults to SELECT DISTINCT customer_id, customer_code, customer_name FROM invoice.
     Always returns {customers: []} on error — never crashes the UI.
@@ -31,11 +30,11 @@ async def list_customers(
 
     try:
         if conn_type == "cosmosdb":
-            customers = _fetch_customers_cosmos(connection_id, table, id_col, name_col, code_col, limit)
+            customers = _fetch_customers_cosmos(connection_id, table, id_col, name_col, code_col)
         elif conn_type == "powerbi":
             return {"customers": [], "error": "Not supported for Power BI"}
         else:
-            customers = await _fetch_customers_sql(connection_id, table, id_col, name_col, code_col, limit)
+            customers = await _fetch_customers_sql(connection_id, table, id_col, name_col, code_col)
     except Exception as exc:
         logger.warning("scope/customers fetch failed (conn=%s): %s", connection_id, exc)
         return {"customers": [], "error": str(exc)}
@@ -51,7 +50,6 @@ async def _fetch_customers_sql(
     id_col: str,
     name_col: str,
     code_col: str,
-    limit: int,
 ) -> list[dict]:
     from app.db.connection_manager import connection_manager
     from sqlalchemy import text
@@ -95,15 +93,13 @@ async def _fetch_customers_sql(
             f"SELECT {id_expr}, {code_expr}, {name_expr} "
             f"FROM {table} "
             f"GROUP BY {group_col} "
-            f"ORDER BY {order_col} "
-            f"LIMIT {limit}"
+            f"ORDER BY {order_col}"
         )
     else:
         sql = (
             f"SELECT DISTINCT {', '.join(select_parts)} "
             f"FROM {table} "
-            f"ORDER BY {order_col} "
-            f"LIMIT {limit}"
+            f"ORDER BY {order_col}"
         )
 
     async with engine.connect() as conn:
@@ -125,13 +121,12 @@ def _fetch_customers_cosmos(
     id_col: str,
     name_col: str,
     code_col: str,
-    limit: int,
 ) -> list[dict]:
     from app.db.cosmos_manager import cosmos_manager
 
-    # Cosmos DB does not support SELECT DISTINCT — use TOP + deduplicate in Python
+    # Cosmos DB does not support SELECT DISTINCT — fetch all and deduplicate in Python.
     sql = (
-        f"SELECT TOP {limit} c.{id_col}, c.{code_col}, c.{name_col} "
+        f"SELECT c.{id_col}, c.{code_col}, c.{name_col} "
         f"FROM {table} c ORDER BY c.{name_col}"
     )
     result = cosmos_manager.execute_query(connection_id, sql)

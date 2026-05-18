@@ -33,6 +33,8 @@ export default function CustomerScopeSelector({
 
   const isAdmin = !selectedScope;
 
+  const DEFAULT_VISIBLE = 50;
+
   const filtered = search
     ? customers.filter(
         (c) =>
@@ -41,6 +43,11 @@ export default function CustomerScopeSelector({
           c.id.includes(search)
       )
     : customers;
+
+  // Default view caps the rendered list at 50 to keep the dropdown responsive
+  // for large customer bases. Searching always shows every match.
+  const visible = search ? filtered : filtered.slice(0, DEFAULT_VISIBLE);
+  const hiddenCount = !search ? Math.max(0, customers.length - visible.length) : 0;
 
   return (
     <div className="css-wrap" ref={dropdownRef}>
@@ -66,12 +73,12 @@ export default function CustomerScopeSelector({
             <span>Select Scope</span>
           </div>
 
-          {customers.length > 5 && (
+          {customers.length > 10 && (
             <div className="css-search-wrap">
               <Search size={13} className="css-search-icon" />
               <input
                 className="css-search"
-                placeholder="Search customers..."
+                placeholder={`Search ${customers.length} customers...`}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 autoFocus
@@ -95,7 +102,7 @@ export default function CustomerScopeSelector({
               </button>
             )}
 
-            {filtered.map((c, idx) => (
+            {visible.map((c, idx) => (
               <button
                 key={`${c.id}-${idx}`}
                 className={`css-item ${selectedScope === c.id ? 'css-item--active' : ''}`}
@@ -109,6 +116,12 @@ export default function CustomerScopeSelector({
                 {selectedScope === c.id && <span className="css-item-check">✓</span>}
               </button>
             ))}
+
+            {hiddenCount > 0 && (
+              <div className="css-empty">
+                Showing first {DEFAULT_VISIBLE} of {customers.length}. Type to search the rest.
+              </div>
+            )}
 
             {filtered.length === 0 && search && (
               <div className="css-empty">No customers match "{search}"</div>
