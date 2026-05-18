@@ -85,7 +85,7 @@ export default function TextSummary({ summary, onFollowUp, isConversational }: T
           </h4>
           <div className="txs-followup-list">
             {summary.follow_up_questions.map((q, i) => (
-              <button key={i} onClick={() => onFollowUp(q)} className="txs-followup-btn">
+              <button key={i} onClick={() => onFollowUp?.(q)} className="txs-followup-btn">
                 <ArrowRight size={12} />
                 {q}
               </button>

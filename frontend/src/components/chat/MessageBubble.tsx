@@ -238,7 +238,7 @@ function CompactInsightPreview({
       {false && expanded && summary.follow_up_questions && summary.follow_up_questions.length > 0 && onFollowUp && (
         <div className="chat-compact-followups">
           {summary.follow_up_questions.slice(0, 3).map((q, i) => (
-            <button key={i} onClick={() => onFollowUp(q)} className="chat-compact-followup-btn">
+            <button key={i} onClick={() => onFollowUp?.(q)} className="chat-compact-followup-btn">
               {q}
             </button>
           ))}
