@@ -327,7 +327,7 @@ export default function WorkspaceView() {
           activeConnection={activeConnection}
           onOpenConnectionDialog={() => setShowConnectionDialog(true)}
         />
-        <MetricsBar sessions={sessions} />
+        {/* <MetricsBar sessions={sessions} /> */}
 
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0, position: 'relative' }}>
           <WorkspaceSidebar
