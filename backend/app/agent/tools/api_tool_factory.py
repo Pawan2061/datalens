@@ -273,10 +273,23 @@ def _build_success(
 
     # Pre-compute numeric column totals across ALL rows before capping so the
     # synthesis LLM always has accurate aggregates regardless of row cap.
+    # ERP APIs often return numbers as strings (e.g. "BALANCE_AMT": "14334"),
+    # so we try float() conversion for string values too.
+    def _to_float(v: Any) -> float | None:
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return None
+        return None
+
     numeric_totals: dict[str, float] = {}
     if rows:
         for col in (rows[0] or {}).keys():
-            vals = [r.get(col) for r in rows if isinstance(r.get(col), (int, float))]
+            vals = [_to_float(r.get(col)) for r in rows]
+            vals = [v for v in vals if v is not None]
             if vals:
                 numeric_totals[col] = round(sum(vals), 2)
 
