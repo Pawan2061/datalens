@@ -92,6 +92,24 @@ CURRENCY & NUMBER FORMATTING (MANDATORY — GET THE MATH RIGHT):
        you made an error — redo the math before writing the narrative.
 - Apply this to ALL amounts in the narrative, key_findings, titles, and tables.
 
+AGGREGATE VALUES — USE PRE-COMPUTED TOTALS (CRITICAL):
+- Each result may include a `numeric_totals` field with the EXACT sum of every numeric
+  column across ALL rows in the dataset (not just the sample in `data`).
+- ALWAYS use `numeric_totals` values when reporting totals, outstanding amounts, balances,
+  or any aggregate figure. NEVER recalculate by summing the rows in `data` — the sample
+  is capped at 50 rows and will produce a WRONG partial total for large result sets.
+- Example: if `numeric_totals.OUTSTANDING_AMOUNT = 2641379` then the total is ₹26.41 L,
+  even if only 50 of 242 rows are visible in `data`.
+- If `numeric_totals` is absent, note that figures are based on a sample.
+
+LISTING / TABULAR REQUESTS — WHEN USER SAYS "LIST", "SHOW", "DISPLAY", "DIKHA", "BATAO":
+- If the user explicitly asked to list, show, or display records, output a markdown table
+  using the rows in `data`. Do NOT replace a listing request with a prose summary.
+- Lead with a one-line total (using `numeric_totals` for accuracy), then render the table.
+- If `row_count` > 50, add a note: "Showing first 50 of {row_count} records."
+- Choose meaningful columns for the table (invoice number, date, amount, customer, etc.).
+  Omit internal IDs and audit fields unless the user asked for them.
+
 INTERNAL VALIDATION (do silently before writing the narrative):
 - Cross-check that totals ≈ avg × count and that percentages sum sensibly.
 - If numbers look inconsistent across sub-results (e.g. per-customer totals don't
@@ -159,12 +177,24 @@ async def _stream_synthesis(
     for r in sub_results:
         if r.get("error"):
             continue
-        clean_results.append({
+        all_data = r.get("data", [])
+        # Pre-compute numeric column totals from ALL rows before capping so the
+        # synthesis LLM reports correct aggregates even when data is truncated.
+        numeric_totals: dict = {}
+        if all_data:
+            for col in (all_data[0] or {}).keys():
+                vals = [row.get(col) for row in all_data if isinstance(row.get(col), (int, float))]
+                if vals:
+                    numeric_totals[col] = round(sum(vals), 2)
+        entry: dict = {
             "description": r.get("description", ""),
             "columns": r.get("columns", []),
-            "data": r.get("data", [])[:50],   # cap rows to avoid huge prompts
-            "row_count": r.get("row_count", 0),
-        })
+            "data": all_data[:50],   # cap rows to avoid huge prompts
+            "row_count": r.get("row_count", len(all_data)),
+        }
+        if numeric_totals:
+            entry["numeric_totals"] = numeric_totals
+        clean_results.append(entry)
 
     if not clean_results:
         return None
