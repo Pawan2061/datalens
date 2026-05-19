@@ -270,6 +270,15 @@ def _build_success(
 
     columns = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
 
+    # Pre-compute numeric column totals across ALL rows before capping so the
+    # synthesis LLM always has accurate aggregates regardless of row cap.
+    numeric_totals: dict[str, float] = {}
+    if rows:
+        for col in (rows[0] or {}).keys():
+            vals = [r.get(col) for r in rows if isinstance(r.get(col), (int, float))]
+            if vals:
+                numeric_totals[col] = round(sum(vals), 2)
+
     # Cap rows + compact each row to keep the ReAct context under budget.
     # ERP responses often embed nested arrays (e.g. LINE_ITEMS_ARRAY) that make
     # a single row worth thousands of tokens. The full untruncated dataset still
@@ -286,6 +295,8 @@ def _build_success(
         "duration_ms": round(duration_ms, 2),
         "source": "api",
     }
+    if numeric_totals:
+        payload["numeric_totals"] = numeric_totals
     if total_rows > LLM_ROW_CAP:
         payload["truncated_for_llm"] = True
         payload["visible_rows"] = len(visible_rows)

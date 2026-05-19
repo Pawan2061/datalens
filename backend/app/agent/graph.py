@@ -97,10 +97,20 @@ AGGREGATE VALUES — USE PRE-COMPUTED TOTALS (CRITICAL):
   column across ALL rows in the dataset (not just the sample in `data`).
 - ALWAYS use `numeric_totals` values when reporting totals, outstanding amounts, balances,
   or any aggregate figure. NEVER recalculate by summing the rows in `data` — the sample
-  is capped at 50 rows and will produce a WRONG partial total for large result sets.
+  may be capped and will produce a WRONG partial total for large result sets.
 - Example: if `numeric_totals.OUTSTANDING_AMOUNT = 2641379` then the total is ₹26.41 L,
   even if only 50 of 242 rows are visible in `data`.
 - If `numeric_totals` is absent, note that figures are based on a sample.
+
+OUTSTANDING / BALANCE COLUMN SELECTION (apply when reporting receivables):
+- When results contain BOTH an invoice/billed amount column AND a balance/outstanding
+  column, the correct total for "outstanding", "bakaya", "balance due", "kitna baki" is
+  the BALANCE column — not the Amount/Invoice Amount column.
+  • Balance / BALANCE / OUTSTANDING_AMOUNT / REMAINING_AMOUNT → USE THIS for outstanding total
+  • Amount / AMOUNT / INVOICE_AMOUNT / TOTAL_AMOUNT → original billed amount, NOT outstanding
+- The difference between the two is partial payments already received.
+- If the user asked about outstanding/overdue/bakaya, always pick the balance column from
+  `numeric_totals`, not the invoice amount column. State which column you used.
 
 LISTING / TABULAR REQUESTS — WHEN USER SAYS "LIST", "SHOW", "DISPLAY", "DIKHA", "BATAO":
 - If the user explicitly asked to list, show, or display records, output a markdown table
@@ -178,14 +188,20 @@ async def _stream_synthesis(
         if r.get("error"):
             continue
         all_data = r.get("data", [])
-        # Pre-compute numeric column totals from ALL rows before capping so the
-        # synthesis LLM reports correct aggregates even when data is truncated.
-        numeric_totals: dict = {}
-        if all_data:
-            for col in (all_data[0] or {}).keys():
-                vals = [row.get(col) for row in all_data if isinstance(row.get(col), (int, float))]
-                if vals:
-                    numeric_totals[col] = round(sum(vals), 2)
+        # For API results, numeric_totals are pre-computed from ALL rows in
+        # api_tool_factory before the 25-row LLM cap — use those directly so
+        # we don't overwrite accurate totals with partial sums from capped data.
+        # For SQL results (no pre-computed totals), compute from all_data which
+        # contains the full result set before our own 50-row cap below.
+        if r.get("numeric_totals"):
+            numeric_totals: dict = r["numeric_totals"]
+        else:
+            numeric_totals = {}
+            if all_data:
+                for col in (all_data[0] or {}).keys():
+                    vals = [row.get(col) for row in all_data if isinstance(row.get(col), (int, float))]
+                    if vals:
+                        numeric_totals[col] = round(sum(vals), 2)
         entry: dict = {
             "description": r.get("description", ""),
             "columns": r.get("columns", []),
