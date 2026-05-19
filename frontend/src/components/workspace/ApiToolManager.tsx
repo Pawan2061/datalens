@@ -21,7 +21,7 @@ function emptyTool(): Partial<ApiToolConfig> {
   return {
     name: '', tool_name: '', description: '', endpoint_url: '', req_code: '',
     method: 'POST', auth_config: { apikey: '', token: '' },
-    input_parameters: [], response_path: '', response_fields: [],
+    input_parameters: [], response_path: '', response_fields: [], balance_column: '',
     enabled: true, timeout_seconds: 30,
     auth_mode: 'static',
     token_endpoint: '', token_response_path: 'AUTH_TOKEN',
@@ -201,6 +201,7 @@ export default function ApiToolManager({ workspaceId, onClose }: ApiToolManagerP
                         {tool.req_code && <div className="atm-detail"><strong>reqCode:</strong> <code>{tool.req_code}</code></div>}
                         <div className="atm-detail"><strong>Method:</strong> {tool.method}</div>
                         <div className="atm-detail"><strong>Response path:</strong> <code>{tool.response_path || '(root)'}</code></div>
+                        {tool.balance_column && <div className="atm-detail"><strong>Balance column:</strong> <code>{tool.balance_column}</code></div>}
                         {tool.input_parameters.length > 0 && (
                           <div className="atm-detail">
                             <strong>Input Parameters:</strong>
@@ -468,6 +469,16 @@ export default function ApiToolManager({ workspaceId, onClose }: ApiToolManagerP
                       response_fields: e.target.value.split(',').map(s => s.trim()).filter(Boolean),
                     })}
                     placeholder="e.g. PIECE_NO, PIECE_VALUE, WAREHOUSE_NAME"
+                  />
+                </div>
+
+                <div className="atm-form-row">
+                  <label>Balance / Outstanding Column</label>
+                  <input
+                    value={editTool.balance_column || ''}
+                    onChange={(e) => setEditTool({ ...editTool, balance_column: e.target.value })}
+                    placeholder="e.g. BAL_AMT (column whose total = outstanding balance)"
+                    title="When set, this column's sum is exposed as primary_balance_total so the AI always quotes the right figure for outstanding/bakaya queries."
                   />
                 </div>
 

@@ -253,6 +253,7 @@ def _build_success(
     data: dict,
     response_path: str,
     duration_ms: float,
+    balance_column: str = "",
 ) -> str:
     extracted = _extract_nested(data, response_path)
 
@@ -297,6 +298,11 @@ def _build_success(
     }
     if numeric_totals:
         payload["numeric_totals"] = numeric_totals
+    # When an API tool names its balance column, pre-extract its total so the
+    # synthesis LLM has a single unambiguous figure to quote — no column-picking.
+    if balance_column and balance_column in numeric_totals:
+        payload["primary_balance_total"] = numeric_totals[balance_column]
+        payload["primary_balance_column"] = balance_column
     if total_rows > LLM_ROW_CAP:
         payload["truncated_for_llm"] = True
         payload["visible_rows"] = len(visible_rows)
@@ -378,6 +384,7 @@ def create_api_tool(
     auth_config = config.get("auth_config", {}) or {}
     input_params = config.get("input_parameters", []) or []
     response_path = config.get("response_path", "")
+    balance_column = config.get("balance_column", "") or ""
     timeout = float(config.get("timeout_seconds", 30))
     body_template = config.get("body_template", "")
     extra_headers = config.get("headers", {}) or {}
@@ -512,7 +519,7 @@ def create_api_tool(
         if result_code and result_code != "PASS":
             return _build_error(api_name, f"API returned: {result_msg}", duration_ms)
 
-        return _build_success(api_name, data, response_path, duration_ms)
+        return _build_success(api_name, data, response_path, duration_ms, balance_column)
 
     async def _call_two_step(kwargs: dict) -> str:
         start = time.perf_counter()
@@ -568,7 +575,7 @@ def create_api_tool(
             msg = result.get("RESULT_MSG") or result.get("message") or "Non-success response"
             return _build_error(api_name, f"API returned: {msg}", duration_ms)
 
-        return _build_success(api_name, result, response_path, duration_ms)
+        return _build_success(api_name, result, response_path, duration_ms, balance_column)
 
     async def _call_api(**kwargs: str) -> str:
         if auth_mode == "two_step_token":

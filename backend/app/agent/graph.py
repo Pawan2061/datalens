@@ -103,14 +103,15 @@ AGGREGATE VALUES — USE PRE-COMPUTED TOTALS (CRITICAL):
 - If `numeric_totals` is absent, note that figures are based on a sample.
 
 OUTSTANDING / BALANCE COLUMN SELECTION (apply when reporting receivables):
-- When results contain BOTH an invoice/billed amount column AND a balance/outstanding
-  column, the correct total for "outstanding", "bakaya", "balance due", "kitna baki" is
-  the BALANCE column — not the Amount/Invoice Amount column.
+- If the result contains `primary_balance_total`, that IS the outstanding total — use it
+  directly. Do NOT pick any other column. Do NOT recalculate. Just format and quote it.
+  (`primary_balance_column` names the source column for transparency if you want to mention it.)
+- Only if `primary_balance_total` is absent: look in `numeric_totals` for a balance-like
+  column name and use that. Column name hints:
   • Balance / BALANCE / OUTSTANDING_AMOUNT / REMAINING_AMOUNT → USE THIS for outstanding total
   • Amount / AMOUNT / INVOICE_AMOUNT / TOTAL_AMOUNT → original billed amount, NOT outstanding
 - The difference between the two is partial payments already received.
-- If the user asked about outstanding/overdue/bakaya, always pick the balance column from
-  `numeric_totals`, not the invoice amount column. State which column you used.
+- NEVER add up individual row values to compute the outstanding total — partial rows give wrong sums.
 
 LISTING / TABULAR REQUESTS — WHEN USER SAYS "LIST", "SHOW", "DISPLAY", "DIKHA", "BATAO":
 - If the user explicitly asked to list, show, or display records, output a markdown table

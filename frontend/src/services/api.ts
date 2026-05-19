@@ -485,6 +485,7 @@ export interface ApiToolConfig {
   input_parameters: ApiToolParam[];
   response_path: string;
   response_fields: string[];
+  balance_column?: string;
   enabled: boolean;
   test_status: string;
   timeout_seconds: number;
