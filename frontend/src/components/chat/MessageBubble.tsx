@@ -101,6 +101,13 @@ export default function MessageBubble({ message, onFollowUp, onPushToCanvas, onD
           </div>
         )}
 
+        {/* Plain text reply (email confirmation, error messages, etc.) */}
+        {!message.insightResult && !message.streamingNarrative && message.content && (
+          <div className="chat-streaming-narrative">
+            <Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown>
+          </div>
+        )}
+
         {/* Insight result */}
         {message.insightResult && (() => {
           const hasVisuals = (message.insightResult.charts?.length ?? 0) > 0 || (message.insightResult.tables?.length ?? 0) > 0;
