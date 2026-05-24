@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     cosmos_key: str = ""
     cosmos_database: str = "DataLensDB"
 
+    # Email / SMTP
+    email_smtp_host: str = "smtp.gmail.com"
+    email_smtp_port: int = 587
+    email_smtp_user: str = ""
+    email_smtp_pass: str = ""
+    email_smtp_from: str = ""
+
     class Config:
         env_file = str(_ENV_FILE)
 

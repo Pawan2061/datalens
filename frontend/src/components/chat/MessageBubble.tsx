@@ -1,10 +1,16 @@
 import { useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Sparkles, LayoutGrid, Check, Trash2, ThumbsUp, ThumbsDown, Zap } from 'lucide-react';
+import { Sparkles, LayoutGrid, Check, Trash2, ThumbsUp, ThumbsDown, Zap, Download } from 'lucide-react';
 import type { ChatMessage, InsightResult } from '../../types/chat';
 import ThinkingSteps from './ThinkingSteps';
 import InsightCard from '../insights/InsightCard';
+import { exportInsightToExcel } from '../../utils/exportToExcel';
+
+function hasExportableData(insight: InsightResult): boolean {
+  return (insight.tables?.length ?? 0) > 0 ||
+    (insight.charts ?? []).some(c => !['kpi', 'gauge'].includes(c.chart_type) && (c.data?.length ?? 0) > 0);
+}
 
 /** Renders simple markdown bold (**text**) as <strong> tags */
 function renderBoldText(text: string) {
@@ -144,6 +150,15 @@ export default function MessageBubble({ message, onFollowUp, onPushToCanvas, onD
             >
               <ThumbsDown size={13} />
             </button>
+            {hasExportableData(message.insightResult) && (
+              <button
+                className="chat-feedback-btn"
+                onClick={() => exportInsightToExcel(message.insightResult!, message.insightResult!.summary.title)}
+                title="Download as Excel"
+              >
+                <Download size={13} />
+              </button>
+            )}
           </div>
         )}
       </div>

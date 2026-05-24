@@ -63,6 +63,29 @@ export function createEventSource(sessionId: string): EventSource {
   return new EventSource(`${API_BASE}/api/chat/stream/${sessionId}`);
 }
 
+export async function sendDataEmail(
+  toEmail: string,
+  insightTitle: string,
+  tables: unknown[],
+  charts: unknown[],
+): Promise<void> {
+  const resp = await fetch(`${API_BASE}/api/email/send-data`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({
+      to_email: toEmail,
+      insight_title: insightTitle,
+      tables,
+      charts,
+    }),
+  });
+  if (!resp.ok) {
+    let detail = `Email failed (${resp.status})`;
+    try { detail = (await resp.json()).detail ?? detail; } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+}
+
 /**
  * Re-run a user question through the backend pipeline and return fresh InsightResult.
  * Uses a temporary session so chat history is not polluted.

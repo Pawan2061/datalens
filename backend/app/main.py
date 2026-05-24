@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent import cache_warmer
-from app.api.routes import admin, analytics, chat, connections, health, scope, users, persistence, profiles
+from app.api.routes import admin, analytics, chat, connections, email, health, scope, users, persistence, profiles
 from app.config import settings
 from app.db.connection_manager import connection_manager
 from app.db.insight_db import insight_db
@@ -58,3 +58,4 @@ app.include_router(profiles.router, tags=["profiles"])
 app.include_router(scope.router, tags=["scope"])
 app.include_router(admin.router, tags=["admin"])
 app.include_router(analytics.router, tags=["analytics"])
+app.include_router(email.router, tags=["email"])
