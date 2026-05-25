@@ -164,6 +164,7 @@ function LimitsModal({ user, onClose, onSave }: {
   const [maxT, setMaxT] = useState(String(user.max_tokens_per_day));
   const [maxC, setMaxC] = useState(String(user.max_cost_usd_per_month));
   const [expiry, setExpiry] = useState(user.expiry_date || '');
+  const [customerCode, setCustomerCode] = useState(user.customer_code || '');
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -173,6 +174,7 @@ function LimitsModal({ user, onClose, onSave }: {
       max_tokens_per_day: parseInt(maxT) || 0,
       max_cost_usd_per_month: parseFloat(maxC) || 0,
       expiry_date: expiry || null,
+      customer_code: customerCode.trim(),
     });
     setSaving(false);
     onClose();
@@ -183,6 +185,7 @@ function LimitsModal({ user, onClose, onSave }: {
       <div className="adm-modal" onClick={(e) => e.stopPropagation()}>
         <h3 className="adm-modal-title">Set Limits for {user.name}</h3>
         <div className="adm-modal-form">
+          <label className="adm-modal-label">Customer Code<input type="text" className="adm-modal-input" value={customerCode} onChange={(e) => setCustomerCode(e.target.value)} placeholder="Leave empty for unscoped (admin) access" /></label>
           <label className="adm-modal-label">Max Questions/Day<input type="number" className="adm-modal-input" value={maxQ} onChange={(e) => setMaxQ(e.target.value)} /></label>
           <label className="adm-modal-label">Max Tokens/Day<input type="number" className="adm-modal-input" value={maxT} onChange={(e) => setMaxT(e.target.value)} /></label>
           <label className="adm-modal-label">Max Cost USD/Month<input type="number" step="0.01" className="adm-modal-input" value={maxC} onChange={(e) => setMaxC(e.target.value)} /></label>
@@ -191,9 +194,96 @@ function LimitsModal({ user, onClose, onSave }: {
         <div className="adm-modal-actions">
           <button className="adm-btn adm-btn--secondary" onClick={onClose}>Cancel</button>
           <button className="adm-btn adm-btn--primary" onClick={handleSave} disabled={saving}>
-            {saving ? <Loader2 size={14} className="ts-spinner" /> : null} Save Limits
+            {saving ? <Loader2 size={14} className="ts-spinner" /> : null} Save
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Create User Modal ─── */
+function CreateUserModal({ onClose, onCreated, headers }: {
+  onClose: () => void;
+  onCreated: () => void;
+  headers: () => Record<string, string>;
+}) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [customerCode, setCustomerCode] = useState('');
+  const [role, setRole] = useState<'user' | 'manager' | 'admin'>('user');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!name.trim() || !email.trim()) {
+      setError('Name and email are required');
+      return;
+    }
+    if (role === 'user' && !customerCode.trim()) {
+      setError('Customer code is required for non-admin users');
+      return;
+    }
+    setSaving(true);
+    try {
+      // Customer_code is only meaningful for regular users; admins/managers
+      // browse cross-customer via the dropdown, so we strip the value to
+      // avoid stale data on their doc.
+      const payloadCustomerCode = role === 'user' ? customerCode.trim() : '';
+      const response = await fetch(`${API_BASE}/api/admin/users`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({
+          name: name.trim(),
+          email: email.trim().toLowerCase(),
+          customer_code: payloadCustomerCode,
+          role,
+          status: 'active',
+        }),
+      });
+      if (!response.ok) {
+        let detail = 'Failed to create user';
+        try {
+          const data = await response.json();
+          if (typeof data?.detail === 'string') detail = data.detail;
+        } catch { /* keep fallback */ }
+        setError(detail);
+        setSaving(false);
+        return;
+      }
+      onCreated();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create user');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="adm-modal-overlay" onClick={onClose}>
+      <div className="adm-modal" onClick={(e) => e.stopPropagation()}>
+        <h3 className="adm-modal-title">Create User</h3>
+        <form className="adm-modal-form" onSubmit={handleSubmit}>
+          <label className="adm-modal-label">Name<input type="text" className="adm-modal-input" value={name} onChange={(e) => setName(e.target.value)} autoFocus required /></label>
+          <label className="adm-modal-label">Email<input type="email" className="adm-modal-input" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
+          <label className="adm-modal-label">Customer Code<input type="text" className="adm-modal-input" value={role === 'user' ? customerCode : ''} onChange={(e) => setCustomerCode(e.target.value)} placeholder={role === 'user' ? 'e.g. C0123 (required)' : 'Not used for admin / manager'} disabled={role !== 'user'} /></label>
+          <label className="adm-modal-label">Role
+            <select className="adm-modal-input" value={role} onChange={(e) => setRole(e.target.value as 'user' | 'manager' | 'admin')}>
+              <option value="user">User (locked to customer)</option>
+              <option value="manager">Manager</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
+          {error && <div style={{ color: '#dc2626', fontSize: 13 }}>{error}</div>}
+          <div className="adm-modal-actions">
+            <button type="button" className="adm-btn adm-btn--secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="adm-btn adm-btn--primary" disabled={saving}>
+              {saving ? <Loader2 size={14} className="ts-spinner" /> : null} Create User
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
@@ -681,6 +771,7 @@ function UsersSection({ users, loading, onAction, headers }: {
   const [limitsUser, setLimitsUser] = useState<User | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
 
   const filtered = filter === 'all' ? users : users.filter((u) => u.status === filter);
   const counts = {
@@ -710,13 +801,18 @@ function UsersSection({ users, loading, onAction, headers }: {
 
   return (
     <div className="adm-users">
-      <div className="adm-tabs">
-        {(['all', 'pending', 'active', 'suspended'] as UserFilter[]).map((f) => (
-          <button key={f} className={`adm-tab ${filter === f ? 'adm-tab--active' : ''}`} onClick={() => setFilter(f)}>
-            {f.charAt(0).toUpperCase() + f.slice(1)}
-            <span className="adm-tab-count">{counts[f]}</span>
-          </button>
-        ))}
+      <div className="adm-tabs" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {(['all', 'pending', 'active', 'suspended'] as UserFilter[]).map((f) => (
+            <button key={f} className={`adm-tab ${filter === f ? 'adm-tab--active' : ''}`} onClick={() => setFilter(f)}>
+              {f.charAt(0).toUpperCase() + f.slice(1)}
+              <span className="adm-tab-count">{counts[f]}</span>
+            </button>
+          ))}
+        </div>
+        <button className="adm-btn adm-btn--primary" onClick={() => setShowCreate(true)}>
+          <UserPlus size={14} /> Create User
+        </button>
       </div>
 
       <div className="adm-table-wrapper">
@@ -725,6 +821,7 @@ function UsersSection({ users, loading, onAction, headers }: {
             <tr>
               <th>User</th>
               <th>Role</th>
+              <th>Customer</th>
               <th>Status</th>
               <th>Questions Today</th>
               <th>Tokens Today</th>
@@ -752,6 +849,7 @@ function UsersSection({ users, loading, onAction, headers }: {
                     <option value="admin">Admin</option>
                   </select>
                 </td>
+                <td><span style={{ fontFamily: 'monospace', fontSize: 12 }}>{u.customer_code || '—'}</span></td>
                 <td><StatusBadge status={u.status} /></td>
                 <td>{u.today_questions}</td>
                 <td>{u.today_tokens?.toLocaleString()}</td>
@@ -780,13 +878,21 @@ function UsersSection({ users, loading, onAction, headers }: {
                 </td>
               </tr>
             ))}
-            {filtered.length === 0 && <tr><td colSpan={8} className="adm-empty">No users found</td></tr>}
+            {filtered.length === 0 && <tr><td colSpan={9} className="adm-empty">No users found</td></tr>}
           </tbody>
         </table>
       </div>
 
       {limitsUser && (
         <LimitsModal user={limitsUser} onClose={() => setLimitsUser(null)} onSave={async (limits) => { await onAction('limits', limitsUser.id, limits); }} />
+      )}
+
+      {showCreate && (
+        <CreateUserModal
+          onClose={() => setShowCreate(false)}
+          onCreated={() => onAction('refresh', '')}
+          headers={headers}
+        />
       )}
     </div>
   );
