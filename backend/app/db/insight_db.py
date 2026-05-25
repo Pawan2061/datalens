@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL DEFAULT '',
     last_login_at TEXT NOT NULL DEFAULT ''
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS customer_code TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_users_customer_code ON users (customer_code);
 
 CREATE TABLE IF NOT EXISTS workspaces (
     id TEXT PRIMARY KEY,

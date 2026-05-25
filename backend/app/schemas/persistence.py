@@ -16,6 +16,10 @@ class UserDoc(BaseModel):
     role: str = "user"  # "admin", "manager", or "user"
     status: str = "pending"  # "pending", "active", "suspended", "expired"
 
+    # Empty string = unscoped (admin/legacy users see everything via dropdown).
+    # Non-empty = the user is locked to this customer; server-side enforcement.
+    customer_code: str = ""
+
     # Quota limits (set by admin)
     max_questions_per_day: int = 0  # 0 = unlimited (admin sets this)
     max_tokens_per_day: int = 0
@@ -58,10 +62,23 @@ class LoginResponse(BaseModel):
 class AdminUserUpdate(BaseModel):
     status: str | None = None  # "active", "suspended"
     role: str | None = None  # "admin", "manager", "user"
+    customer_code: str | None = None  # "" to unscope, non-empty to bind
     max_questions_per_day: int | None = None
     max_tokens_per_day: int | None = None
     max_cost_usd_per_month: float | None = None
     expiry_date: str | None = None
+
+
+class AdminUserCreate(BaseModel):
+    name: str
+    email: str
+    customer_code: str
+    role: str = "user"
+    status: str = "active"  # admin-created users skip the pending step
+    max_questions_per_day: int = 0
+    max_tokens_per_day: int = 0
+    max_cost_usd_per_month: float = 0.0
+    expiry_date: str = ""
 
 
 class UsageRecord(BaseModel):

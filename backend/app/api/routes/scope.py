@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
+
+from app.api.routes.users import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -16,9 +18,14 @@ async def list_customers(
     id_col: str = Query("customer_id", description="Customer ID column"),
     name_col: str = Query("customer_name", description="Customer name column"),
     code_col: str = Query("customer_code", description="Customer code column"),
+    current_user: dict = Depends(get_current_user),
 ):
-    """Return every distinct customer from the invoice table.
+    """Return distinct customers from the configured table.
 
+    Privileged users (admin / manager) see the full list — they use the
+    dropdown to switch scopes. Non-privileged users with a bound
+    ``customer_code`` only see their own customer (single-row list), so the
+    dropdown — when shown — cannot enumerate or leak other customers.
     Defaults to SELECT DISTINCT customer_id, customer_code, customer_name FROM invoice.
     Always returns {customers: []} on error — never crashes the UI.
     """
@@ -38,6 +45,13 @@ async def list_customers(
     except Exception as exc:
         logger.warning("scope/customers fetch failed (conn=%s): %s", connection_id, exc)
         return {"customers": [], "error": str(exc)}
+
+    # Server-side filter: a scoped user can only see their own customer.
+    # Admins/managers see everything (their dropdown is the source of truth).
+    role = current_user.get("role", "user")
+    bound_code = (current_user.get("customer_code") or "").strip()
+    if role not in ("admin", "manager") and bound_code:
+        customers = [c for c in customers if str(c.get("code", "")).strip() == bound_code]
 
     return {"customers": customers}
 
