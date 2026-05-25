@@ -203,14 +203,16 @@ function LimitsModal({ user, onClose, onSave }: {
 }
 
 /* ─── Create User Modal ─── */
-function CreateUserModal({ onClose, onCreated, headers }: {
+function CreateUserModal({ onClose, onCreated, headers, scopeCustomers }: {
   onClose: () => void;
   onCreated: () => void;
   headers: () => Record<string, string>;
+  scopeCustomers?: { id: string; code: string; name: string }[];
 }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [customerCode, setCustomerCode] = useState('');
+  const [customerSearch, setCustomerSearch] = useState('');
   const [role, setRole] = useState<'user' | 'manager' | 'admin'>('user');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -268,7 +270,27 @@ function CreateUserModal({ onClose, onCreated, headers }: {
         <form className="adm-modal-form" onSubmit={handleSubmit}>
           <label className="adm-modal-label">Name<input type="text" className="adm-modal-input" value={name} onChange={(e) => setName(e.target.value)} autoFocus required /></label>
           <label className="adm-modal-label">Email<input type="email" className="adm-modal-input" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
-          <label className="adm-modal-label">Customer Code<input type="text" className="adm-modal-input" value={role === 'user' ? customerCode : ''} onChange={(e) => setCustomerCode(e.target.value)} placeholder={role === 'user' ? 'e.g. C0123 (required)' : 'Not used for admin / manager'} disabled={role !== 'user'} /></label>
+          <label className="adm-modal-label">Customer
+            {scopeCustomers && scopeCustomers.length > 0 && role === 'user' ? (
+              <select
+                className="adm-modal-input"
+                value={customerCode}
+                onChange={(e) => setCustomerCode(e.target.value)}
+                disabled={role !== 'user'}
+                required={role === 'user'}
+              >
+                <option value="">— Select customer —</option>
+                {scopeCustomers
+                  .filter(c => !customerSearch || c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.code.toLowerCase().includes(customerSearch.toLowerCase()))
+                  .map(c => (
+                    <option key={c.id} value={c.id}>{c.name || c.code} ({c.id})</option>
+                  ))
+                }
+              </select>
+            ) : (
+              <input type="text" className="adm-modal-input" value={role === 'user' ? customerCode : ''} onChange={(e) => setCustomerCode(e.target.value)} placeholder={role === 'user' ? 'Customer ID (required)' : 'Not used for admin / manager'} disabled={role !== 'user'} />
+            )}
+          </label>
           <label className="adm-modal-label">Role
             <select className="adm-modal-input" value={role} onChange={(e) => setRole(e.target.value as 'user' | 'manager' | 'admin')}>
               <option value="user">User (locked to customer)</option>
@@ -762,10 +784,11 @@ function ManagersSection({ workspaces, users, loading }: {
 /* ================================================================
    SECTION: Users
    ================================================================ */
-function UsersSection({ users, loading, onAction, headers }: {
+function UsersSection({ users, loading, onAction, headers, scopeCustomers }: {
   users: User[]; loading: boolean;
   onAction: (action: string, userId: string, payload?: Record<string, unknown>) => Promise<void>;
   headers: () => Record<string, string>;
+  scopeCustomers?: { id: string; code: string; name: string }[];
 }) {
   const [filter, setFilter] = useState<UserFilter>('all');
   const [limitsUser, setLimitsUser] = useState<User | null>(null);
@@ -892,6 +915,7 @@ function UsersSection({ users, loading, onAction, headers }: {
           onClose={() => setShowCreate(false)}
           onCreated={() => onAction('refresh', '')}
           headers={headers}
+          scopeCustomers={scopeCustomers}
         />
       )}
     </div>
@@ -959,6 +983,7 @@ export default function AdminDashboard() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
+  const storeWorkspaces = useWorkspaceStore((s) => s.workspaces);
 
   const openWorkspace = (id: string) => {
     setActiveWorkspace(id);
@@ -1088,6 +1113,18 @@ export default function AdminDashboard() {
     usage: 'Usage Logs',
   };
 
+  // Collect all unique scope customers from all workspaces in the store
+  const allScopeCustomers = (() => {
+    const seen = new Set<string>();
+    const result: { id: string; code: string; name: string }[] = [];
+    for (const ws of storeWorkspaces) {
+      for (const c of (ws.scopeCustomers || [])) {
+        if (!seen.has(c.id)) { seen.add(c.id); result.push(c); }
+      }
+    }
+    return result.sort((a, b) => (a.name || a.code).localeCompare(b.name || b.code));
+  })();
+
   return (
     <div className="adm-layout">
       {/* ── Sidebar ── */}
@@ -1189,7 +1226,7 @@ export default function AdminDashboard() {
           {section === 'dashboard' && <DashboardSection stats={stats} workspaces={workspaces} loading={statsLoading && wsLoading} onOpenWorkspace={openWorkspace} />}
           {section === 'workspaces' && <WorkspacesSection workspaces={workspaces} loading={wsLoading} onOpenWorkspace={openWorkspace} onDeleteWorkspace={deleteWorkspace} headers={headers()} onRefresh={refreshAll} />}
           {section === 'managers' && <ManagersSection workspaces={workspaces} users={users} loading={usersLoading && wsLoading} />}
-          {section === 'users' && <UsersSection users={users} loading={usersLoading} onAction={handleUserAction} headers={headers} />}
+          {section === 'users' && <UsersSection users={users} loading={usersLoading} onAction={handleUserAction} headers={headers} scopeCustomers={allScopeCustomers} />}
           {section === 'usage' && <UsageSection usage={usage} loading={usageLoading} />}
         </div>
       </main>

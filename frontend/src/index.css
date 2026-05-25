@@ -2344,6 +2344,20 @@ body {
 .ic-wrap > * + * { margin-top: 24px; }
 .ic-section > * + * { margin-top: 20px; }
 
+/* ── Standalone Tables ──────────────────────────────────── */
+.ic-tables { display: flex; flex-direction: column; gap: 16px; }
+.ic-table-block { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.ic-table-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; background: var(--surface-2, #f8f9fa);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px; font-weight: 500; color: var(--text-secondary);
+}
+.ic-table-count {
+  margin-left: auto; font-size: 11px; font-weight: 400;
+  background: var(--border); padding: 2px 8px; border-radius: 10px;
+}
+
 /* ── Chart Grid Layout ──────────────────────────────────── */
 .ic-chart-grid {
   display: grid;

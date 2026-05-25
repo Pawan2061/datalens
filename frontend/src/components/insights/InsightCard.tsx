@@ -1,8 +1,56 @@
 import { Fragment, useState } from 'react';
-import { Clock, Database, Layers, LayoutGrid, Check, ChevronDown, ChevronRight } from 'lucide-react';
-import type { InsightResult } from '../../types/chat';
+import { Clock, Database, Layers, LayoutGrid, Check, ChevronDown, ChevronRight, Table2 } from 'lucide-react';
+import type { InsightResult, TableData } from '../../types/chat';
 import TextSummary from './TextSummary';
 import ChartRenderer from './ChartRenderer';
+
+function StandaloneTable({ title, columns, data }: TableData) {
+  const [expanded, setExpanded] = useState(false);
+  const displayData = expanded ? data : data.slice(0, 25);
+  const hasMore = data.length > 25;
+  if (!data.length || !columns.length) return null;
+
+  return (
+    <div className="ic-table-block">
+      {title && (
+        <div className="ic-table-header">
+          <Table2 size={14} />
+          <span>{title}</span>
+          <span className="ic-table-count">{data.length.toLocaleString()} rows</span>
+        </div>
+      )}
+      <div className="cr-datatable">
+        <div className="cr-datatable-scroll">
+          <table className="cr-datatable-table">
+            <thead>
+              <tr>
+                {columns.map(col => (
+                  <th key={col} className="cr-datatable-th">{col.replace(/_/g, ' ')}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {displayData.map((row, i) => (
+                <tr key={i} className="cr-datatable-row">
+                  {columns.map(col => (
+                    <td key={col} className="cr-datatable-td">
+                      {String(row[col] ?? '—')}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {hasMore && (
+          <button className="cr-datatable-more" onClick={() => setExpanded(!expanded)}>
+            {expanded ? 'Show less' : `Show all ${data.length} rows`}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 const STEP_LABELS: Record<string, string> = {
   quick_response_check: 'Quick response check',
@@ -87,7 +135,14 @@ export default function InsightCard({ insight, onFollowUp, onPushToCanvas }: Ins
         );
       })()}
 
-      {/* No standalone tables — data is accessed via "Data" button on each chart */}
+      {/* Standalone data tables — shown when data isn't already charted */}
+      {tables && tables.length > 0 && (
+        <div className="ic-tables">
+          {tables.map((tbl, ti) => (
+            <StandaloneTable key={ti} title={tbl.title} columns={tbl.columns} data={tbl.data} />
+          ))}
+        </div>
+      )}
 
       {/* Execution metadata — only for actual analysis with queries */}
       {execution_metadata && execution_metadata.sub_query_count > 0 && (

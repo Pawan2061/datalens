@@ -297,7 +297,7 @@ def _build_success(
     # ERP responses often embed nested arrays (e.g. LINE_ITEMS_ARRAY) that make
     # a single row worth thousands of tokens. The full untruncated dataset still
     # reaches the UI via a separate channel — this only bounds the LLM view.
-    LLM_ROW_CAP = 25
+    LLM_ROW_CAP = 50
     total_rows = len(rows)
     visible_rows = [_compact_row_for_llm(r) for r in rows[:LLM_ROW_CAP]]
 

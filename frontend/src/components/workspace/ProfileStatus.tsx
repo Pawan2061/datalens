@@ -12,6 +12,7 @@ interface ProfileStatusProps {
   workspaceId: string;
   connectionId: string;
   connectionName: string;
+  readOnly?: boolean;
 }
 
 type Status = 'none' | 'generating' | 'ready' | 'failed' | 'checking';
@@ -20,6 +21,7 @@ export default function ProfileStatus({
   workspaceId,
   connectionId,
   connectionName,
+  readOnly = false,
 }: ProfileStatusProps) {
   const [status, setStatus] = useState<Status>('checking');
   const [progress, setProgress] = useState('');
@@ -166,7 +168,7 @@ export default function ProfileStatus({
 
   return (
     <div className="profile-status" data-status={status}>
-      {status === 'none' && (
+      {status === 'none' && !readOnly && (
         <>
           <button
             className="profile-status-view"
@@ -196,13 +198,15 @@ export default function ProfileStatus({
             <Brain size={14} className="profile-status-icon" />
             <span className="profile-status-text">Data profiled</span>
           </button>
-          <button
-            className="profile-status-refresh"
-            onClick={handleRefresh}
-            title="Re-analyze data"
-          >
-            <RefreshCw size={12} />
-          </button>
+          {!readOnly && (
+            <button
+              className="profile-status-refresh"
+              onClick={handleRefresh}
+              title="Re-analyze data"
+            >
+              <RefreshCw size={12} />
+            </button>
+          )}
         </>
       )}
 
@@ -212,13 +216,15 @@ export default function ProfileStatus({
           <span className="profile-status-text" title={error}>
             Profile failed
           </span>
-          <button
-            className="profile-status-refresh"
-            onClick={handleRefresh}
-            title="Retry"
-          >
-            <RefreshCw size={12} />
-          </button>
+          {!readOnly && (
+            <button
+              className="profile-status-refresh"
+              onClick={handleRefresh}
+              title="Retry"
+            >
+              <RefreshCw size={12} />
+            </button>
+          )}
         </>
       )}
 

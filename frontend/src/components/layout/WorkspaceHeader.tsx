@@ -21,11 +21,12 @@ export default function WorkspaceHeader({
     <header className="wv-header">
       <div className="wv-header-left">
         <span className="wv-header-workspace">{workspace.name}</span>
-        {isPrivileged && activeConnection && (
+        {activeConnection && (
           <ProfileStatus
             workspaceId={workspace.id}
             connectionId={activeConnection.id}
             connectionName={activeConnection.name || activeConnection.database}
+            readOnly={!isPrivileged}
           />
         )}
       </div>
