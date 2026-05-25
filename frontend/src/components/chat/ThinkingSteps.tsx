@@ -100,7 +100,7 @@ const STEP_CONFIG: Record<string, { icon: typeof Brain; getLabel: (s: AgentStep)
 };
 
 export default function ThinkingSteps({ steps, isStreaming }: ThinkingStepsProps) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [expandedDetail, setExpandedDetail] = useState<number | null>(null);
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
 

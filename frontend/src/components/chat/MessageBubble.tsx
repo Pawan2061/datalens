@@ -236,6 +236,17 @@ function CompactInsightPreview({
             {tableCount > 0 && <span>{tableCount} table{tableCount > 1 ? 's' : ''}</span>}
           </div>
 
+          {hasExportableData(insight) && (
+            <button
+              className="chat-push-btn"
+              onClick={() => exportInsightToExcel(insight, summary.title)}
+              title="Download as Excel"
+            >
+              <Download size={12} />
+              Download
+            </button>
+          )}
+
           {!isDeep && onPushToCanvas && (
             <button
               onClick={handlePush}
