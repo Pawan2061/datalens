@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.routes.users import get_admin_user
 from app.db.insight_db import insight_db
-from app.schemas.persistence import AdminUserUpdate
+from app.schemas.persistence import AdminUserCreate, AdminUserUpdate
+from app.services import user_management
 
 router = APIRouter()
 
@@ -14,6 +15,77 @@ router = APIRouter()
 def _clean(doc: dict) -> dict:
     """Strip Cosmos DB metadata keys from a document."""
     return {k: v for k, v in doc.items() if not k.startswith("_")}
+
+
+# ── Create user (admin-driven) ──────────────────────────────────────
+
+@router.post("/api/admin/users")
+async def create_user(body: AdminUserCreate, admin: dict = Depends(get_admin_user)):
+    """Pre-create a user bound to a customer_code. Non-admin users created here
+    cannot self-signup — they must be created via this endpoint."""
+    if not insight_db.is_ready:
+        raise HTTPException(status_code=503, detail="Persistence not configured")
+
+    email = body.email.strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="Name is required")
+    # Regular users must be bound to a customer; admins/managers may be unscoped.
+    if body.role == "user" and not body.customer_code.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="customer_code is required when role is 'user'",
+        )
+
+    existing = await user_management.find_user_by_email(email)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail="A user with this email already exists",
+        )
+
+    try:
+        created = await user_management.create_user_for_customer(
+            name=body.name,
+            email=email,
+            customer_code=body.customer_code,
+            role=body.role,
+            status=body.status,
+            max_questions_per_day=body.max_questions_per_day,
+            max_tokens_per_day=body.max_tokens_per_day,
+            max_cost_usd_per_month=body.max_cost_usd_per_month,
+            expiry_date=body.expiry_date,
+        )
+    except Exception as exc:
+        # Concurrent create_user calls with the same email lose to the
+        # UNIQUE(email) constraint. Inspect the constraint name on psycopg's
+        # UniqueViolation so we don't also catch unrelated PK collisions.
+        try:
+            from psycopg.errors import UniqueViolation
+        except ImportError:
+            UniqueViolation = ()  # type: ignore[assignment]
+        if isinstance(exc, UniqueViolation):
+            constraint = getattr(getattr(exc, "diag", None), "constraint_name", "") or ""
+            if "email" in constraint.lower():
+                raise HTTPException(
+                    status_code=409,
+                    detail="A user with this email already exists",
+                )
+        raise
+    return created
+
+
+# ── List users by customer ──────────────────────────────────────────
+
+@router.get("/api/admin/users/by-customer/{customer_code}")
+async def list_users_for_customer(
+    customer_code: str,
+    admin: dict = Depends(get_admin_user),
+):
+    if not insight_db.is_ready:
+        raise HTTPException(status_code=503, detail="Persistence not configured")
+    return await user_management.list_users_by_customer(customer_code)
 
 
 # ── List all users ───────────────────────────────────────────────────

@@ -30,7 +30,7 @@ export async function sendMessage(
 ): Promise<{ session_id: string; status: string }> {
   const response = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
     body: JSON.stringify({
       session_id: sessionId,
       message,
@@ -40,7 +40,6 @@ export async function sendMessage(
       customer_scope: customerScope,
       customer_scope_name: customerScopeName,
       history,
-      user_id: (() => { try { const a = JSON.parse(localStorage.getItem('datalens-auth') || '{}'); return a?.state?.user?.id || ''; } catch { return ''; } })(),
     }),
   });
   if (!response.ok) {
@@ -60,7 +59,15 @@ export async function sendMessage(
 }
 
 export function createEventSource(sessionId: string): EventSource {
-  return new EventSource(`${API_BASE}/api/chat/stream/${sessionId}`);
+  // SSE can't send custom headers; pass the JWT as a query param so the
+  // backend can verify the requester owns this session.
+  let token = '';
+  try {
+    const stored = localStorage.getItem('datalens-auth');
+    if (stored) token = JSON.parse(stored)?.state?.token || '';
+  } catch { /* ignore */ }
+  const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+  return new EventSource(`${API_BASE}/api/chat/stream/${sessionId}${qs}`);
 }
 
 export async function sendDataEmail(
@@ -612,7 +619,9 @@ export async function fetchCustomers(
   if (nameCol) params.set('name_col', nameCol);
   if (codeCol) params.set('code_col', codeCol);
 
-  const response = await fetch(`${API_BASE}/api/scope/customers?${params}`);
+  const response = await fetch(`${API_BASE}/api/scope/customers?${params}`, {
+    headers: { ...getAuthHeaders() },
+  });
   if (!response.ok) {
     const err = await response.json().catch(() => ({ detail: 'Failed' }));
     throw new Error(err.detail || 'Failed to fetch customers');

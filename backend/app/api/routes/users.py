@@ -76,6 +76,20 @@ async def _is_first_user() -> bool:
     return len(results) == 0
 
 
+async def _check_can_create_on_login(email: str) -> bool:
+    """Decide whether login should auto-create an account.
+
+    Self-signup is closed: only the first-ever user OR the configured
+    ADMIN_EMAIL may be auto-created. Everyone else must be pre-created by
+    an admin via /api/admin/users.
+    """
+    if await _is_first_user():
+        return True
+    if _should_be_admin(email):
+        return True
+    return False
+
+
 # ── Dependencies ─────────────────────────────────────────────────────
 
 async def get_current_user(authorization: str = Header(None)) -> dict:
@@ -224,14 +238,20 @@ async def login(req: LoginRequest):
         users.upsert_item(user_doc)
         user = UserDoc(**{k: v for k, v in user_doc.items() if not k.startswith("_")})
     else:
-        # Determine role/status for new user
-        first_user = await _is_first_user()
-        is_admin = first_user or _should_be_admin(email_lower)
+        # Self-signup is closed — only the first-ever user or the configured
+        # ADMIN_EMAIL may bootstrap themselves. Everyone else must be created
+        # by an admin via POST /api/admin/users.
+        if not await _check_can_create_on_login(email_lower):
+            raise HTTPException(
+                status_code=403,
+                detail="No account found for this email. Please contact your administrator.",
+            )
+        is_admin = True  # only first-user / ADMIN_EMAIL reach here
         user = UserDoc(
             email=email_lower,
             name=req.name.strip(),
-            role="admin" if is_admin else "user",
-            status="active" if is_admin else "pending",
+            role="admin",
+            status="active",
         )
         users.create_item(user.model_dump())
 
@@ -291,14 +311,17 @@ async def google_login(req: GoogleLoginRequest):
         users.upsert_item(user_doc)
         user = UserDoc(**{k: v for k, v in user_doc.items() if not k.startswith("_")})
     else:
-        first_user = await _is_first_user()
-        is_admin = first_user or _should_be_admin(email)
+        if not await _check_can_create_on_login(email):
+            raise HTTPException(
+                status_code=403,
+                detail="No account found for this email. Please contact your administrator.",
+            )
         user = UserDoc(
             email=email,
             name=name,
             avatar_url=picture,
-            role="admin" if is_admin else "user",
-            status="active" if is_admin else "pending",
+            role="admin",
+            status="active",
         )
         users.create_item(user.model_dump())
 
@@ -397,14 +420,17 @@ async def github_login(req: GitHubLoginRequest):
         users.upsert_item(user_doc)
         user = UserDoc(**{k: v for k, v in user_doc.items() if not k.startswith("_")})
     else:
-        first_user = await _is_first_user()
-        is_admin = first_user or _should_be_admin(email)
+        if not await _check_can_create_on_login(email):
+            raise HTTPException(
+                status_code=403,
+                detail="No account found for this email. Please contact your administrator.",
+            )
         user = UserDoc(
             email=email,
             name=name,
             avatar_url=avatar,
-            role="admin" if is_admin else "user",
-            status="active" if is_admin else "pending",
+            role="admin",
+            status="active",
         )
         users.create_item(user.model_dump())
 

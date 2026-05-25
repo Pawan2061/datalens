@@ -5,9 +5,11 @@ import json
 import time
 import uuid
 
-from fastapi import APIRouter, HTTPException
+import jwt as _jwt
+from fastapi import APIRouter, Depends, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
+from app.api.routes.users import get_current_user
 from app.auth.user_doc_cache import get_cached_user_doc, set_cached_user_doc
 from app.agent.active_workspaces import record as _record_active_workspace
 from app.agent.chart_recommender import recommend_charts
@@ -28,6 +30,9 @@ router = APIRouter()
 # In-memory event queues per session
 _event_queues: dict[str, asyncio.Queue] = {}
 _results: dict[str, dict] = {}
+# session_id → user_id owner. Populated at POST /api/chat, checked by the SSE
+# stream endpoint so a leaked session_id alone can't unlock another user's data.
+_session_owner: dict[str, str] = {}
 _STREAM_QUEUE_WAIT_SECONDS = 10.0
 
 
@@ -37,12 +42,35 @@ def _serialize_event(event: AgentEvent) -> dict:
 
 
 @router.post("/api/chat")
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    # Server-trusted identity — never trust request.user_id from the body.
+    user_id = current_user.get("id", "")
+    request.user_id = user_id
+
+    # ── Server-side customer_scope enforcement ────────────────────
+    # Non-privileged users bound to a customer_code may NOT request a
+    # different scope. The dropdown is privileged-only (admin/manager); even
+    # a crafted request body cannot widen access for a regular user.
+    # Empty customer_code (legacy users) keeps current behavior.
+    role = current_user.get("role", "user")
+    bound_code = (current_user.get("customer_code") or "").strip()
+    if role not in ("admin", "manager") and bound_code:
+        request.customer_scope = bound_code
+        # We don't have the resolved display name here without a workspace lookup;
+        # pass the code itself if no name was supplied by the client.
+        if not request.customer_scope_name:
+            request.customer_scope_name = bound_code
+
     session_id = request.session_id or uuid.uuid4().hex[:16]
     queue = _event_queues.get(session_id)
     if queue is None:
         queue = asyncio.Queue()
         _event_queues[session_id] = queue
+    # Record ownership so /api/chat/stream/{id} can reject other users' tokens.
+    _session_owner[session_id] = user_id
 
     await queue.put(
         AgentEvent(
@@ -62,29 +90,22 @@ async def chat(request: ChatRequest):
             detail=f"Request blocked: {layer1.reason}",
         )
 
-    # ── L2 classifier + quota check run in parallel ───────────────
-    # Both are I/O-bound and independent — running them concurrently
-    # cuts ~600-1700 ms from the synchronous baseline.
-
+    # ── L2 classifier (the user_doc is already resolved by the dependency) ──
     async def _run_layer2():
         """Run the LLM security classifier (Layer 2). Returns GuardrailResult."""
         if layer1.verdict == Verdict.FLAG:
-            # Already flagged by L1 — skip the redundant LLM call
             return layer1
         try:
             from app.guardrails.llm_classifier import classify_input
             return await classify_input(request.message)
         except Exception:
-            # Classifier failure → fail open (never block a legitimate user)
             return layer1
 
-    async def _fetch_user_doc() -> "dict | None":
-        """Fetch user document from DB for quota check. Returns None on miss/error."""
-        if not request.user_id:
-            return None
-        return await _load_user_doc(request.user_id)
-
-    layer2, user_doc = await asyncio.gather(_run_layer2(), _fetch_user_doc())
+    layer2 = await _run_layer2()
+    user_doc = current_user
+    # Warm the per-user cache so _record_analytics can read the email cheaply.
+    if user_id:
+        set_cached_user_doc(user_id, user_doc)
 
     # ── Enforce L2 verdict ────────────────────────────────────────
     if layer2.verdict == Verdict.BLOCK:
@@ -480,8 +501,29 @@ def _get_mock_data_for_question(question: str) -> list[list[dict]]:
 # ── SSE streaming endpoint ──────────────────────────────────────────
 
 @router.get("/api/chat/stream/{session_id}")
-async def chat_stream(session_id: str):
-    """SSE endpoint -- streams agent events for a session."""
+async def chat_stream(session_id: str, token: str = ""):
+    """SSE endpoint -- streams agent events for a session.
+
+    EventSource can't send custom headers, so the JWT is passed as a query
+    parameter and verified against the owner recorded at POST /api/chat time.
+    """
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+
+    # Resolve the requesting user from the JWT (or legacy base64 fallback).
+    from app.api.routes.users import _decode_jwt, _decode_legacy_token
+    requesting_user_id: str = ""
+    try:
+        payload = _decode_jwt(token)
+        requesting_user_id = payload.get("sub", "")
+    except _jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except _jwt.InvalidTokenError:
+        try:
+            requesting_user_id, _ = _decode_legacy_token(token)
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
     queue: asyncio.Queue | None = None
     deadline = time.monotonic() + _STREAM_QUEUE_WAIT_SECONDS
     while time.monotonic() < deadline:
@@ -493,48 +535,30 @@ async def chat_stream(session_id: str):
     if queue is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    async def event_generator():
-        while True:
-            event = await queue.get()
-            if event is None:
-                yield {"event": "done", "data": json.dumps({"status": "complete"})}
-                break
-
-            serialized = _serialize_event(event)
-            yield {
-                "event": serialized["event_type"],
-                "data": json.dumps(serialized["data"], default=str),
-            }
-
+    # Ownership check: a leaked session_id is useless without the right token.
+    owner = _session_owner.get(session_id)
+    if owner and requesting_user_id != owner:
+        # Don't let a rejected client stall the in-memory queue forever —
+        # the legitimate POSTer will get its own fresh queue.
         _event_queues.pop(session_id, None)
+        _session_owner.pop(session_id, None)
+        raise HTTPException(status_code=403, detail="Not your session")
+
+    async def event_generator():
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    yield {"event": "done", "data": json.dumps({"status": "complete"})}
+                    break
+
+                serialized = _serialize_event(event)
+                yield {
+                    "event": serialized["event_type"],
+                    "data": json.dumps(serialized["data"], default=str),
+                }
+        finally:
+            _event_queues.pop(session_id, None)
+            _session_owner.pop(session_id, None)
 
     return EventSourceResponse(event_generator())
-
-
-async def _load_user_doc(user_id: str) -> dict | None:
-    cached = get_cached_user_doc(user_id)
-    if cached is not None:
-        return cached
-
-    try:
-        from app.db.insight_db import insight_db
-        if not insight_db.is_ready:
-            return None
-        users = insight_db.container("users")
-        query = "SELECT * FROM c WHERE c.id = @id"
-        params = [{"name": "@id", "value": user_id}]
-        results = await asyncio.to_thread(
-            lambda: list(
-                users.query_items(
-                    query=query,
-                    parameters=params,
-                    enable_cross_partition_query=True,
-                )
-            )
-        )
-        if not results:
-            return None
-        set_cached_user_doc(user_id, results[0])
-        return results[0]
-    except Exception:
-        return None

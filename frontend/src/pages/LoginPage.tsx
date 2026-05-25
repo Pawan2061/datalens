@@ -19,13 +19,17 @@ export default function LoginPage() {
   const [emailAddr, setEmailAddr] = useState("");
   const [error, setError] = useState("");
 
-  // Redirect if already authenticated
+  // Redirect if already authenticated.
+  // Admins/managers land in /admin; regular customers go straight to a
+  // workspace (HomeRoute will pick the right one for them).
   useEffect(() => {
     if (isAuthenticated && user) {
       if (user.status === "pending" || user.status === "suspended") {
         navigate("/pending", { replace: true });
+      } else if (user.role === "admin" || user.role === "manager") {
+        navigate("/admin", { replace: true });
       } else {
-        navigate("/workspace/ws-b0209146", { replace: true });
+        navigate("/", { replace: true });
       }
     }
   }, [isAuthenticated, user, navigate]);

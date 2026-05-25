@@ -7,6 +7,9 @@ import PendingApprovalPage from './pages/PendingApprovalPage';
 import AdminDashboard from './pages/AdminDashboard';
 import AnalyticsDashboard from './pages/AnalyticsDashboard';
 import { useAuthStore } from './store/authStore';
+import { useWorkspaceStore } from './store/workspaceStore';
+
+const DEFAULT_WORKSPACE_ID = 'ws-b0209146';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -91,10 +94,12 @@ function ProtectedRoute({ children, adminOnly = false, privilegedOnly = false }:
 
 function HomeRoute() {
   const user = useAuthStore((s) => s.user);
-  // Admins & managers land on admin panel
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  // Admins & managers land on the admin panel.
   if (user?.role === 'admin' || user?.role === 'manager') return <Navigate to="/admin" replace />;
-  // Regular users go to their first workspace or a simple picker
-  return <Navigate to="/admin" replace />;
+  // Regular customers go straight to a workspace — never the admin UI.
+  const first = workspaces[0]?.id || DEFAULT_WORKSPACE_ID;
+  return <Navigate to={`/workspace/${first}`} replace />;
 }
 
 export default function App() {
@@ -103,7 +108,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/pending" element={<PendingApprovalPage />} />
-        <Route path="/admin" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
+        <Route path="/admin" element={<ProtectedRoute privilegedOnly><AdminDashboard /></ProtectedRoute>} />
         <Route path="/analytics" element={<ProtectedRoute privilegedOnly><AnalyticsDashboard /></ProtectedRoute>} />
         <Route path="/" element={<ProtectedRoute><HomeRoute /></ProtectedRoute>} />
         <Route path="/workspace/:workspaceId" element={<ProtectedRoute><ErrorBoundary><WorkspaceView /></ErrorBoundary></ProtectedRoute>} />

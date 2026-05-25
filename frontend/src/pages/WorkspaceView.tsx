@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useChat } from "../hooks/useChat";
+import { useAuthStore } from "../store/authStore";
 import { useChatStore } from "../store/chatStore";
 import { useWorkspaceStore } from "../store/workspaceStore";
 import { useCanvasStore } from "../store/canvasStore";
@@ -61,8 +62,24 @@ export default function WorkspaceView() {
   const [showConnectionDialog, setShowConnectionDialog] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [customerScope, setCustomerScope] = useState("");
-  const [customerScopeName, setCustomerScopeName] = useState("");
+
+  // Users bound to a customer_code by an admin are locked to that scope and
+  // never see the dropdown. Admins/managers (and legacy unscoped users) keep
+  // the dropdown for cross-customer browsing.
+  const authUser = useAuthStore((s) => s.user);
+  const isPrivileged = useAuthStore((s) => s.isPrivileged);
+  const lockedCustomerCode = !isPrivileged ? authUser?.customer_code || "" : "";
+
+  const [customerScope, setCustomerScope] = useState(lockedCustomerCode);
+  const [customerScopeName, setCustomerScopeName] = useState(lockedCustomerCode);
+
+  // Keep the locked scope in sync if the bound code changes (admin reassigned).
+  useEffect(() => {
+    if (lockedCustomerCode) {
+      setCustomerScope(lockedCustomerCode);
+      setCustomerScopeName((prev) => prev || lockedCustomerCode);
+    }
+  }, [lockedCustomerCode]);
 
   useEffect(() => {
     if (workspaceId) setActiveWorkspace(workspaceId);
@@ -426,7 +443,7 @@ export default function WorkspaceView() {
                 scopeCustomers={workspace?.scopeCustomers || []}
                 customerScope={customerScope}
                 customerScopeName={customerScopeName}
-                onScopeChange={handleScopeChange}
+                onScopeChange={lockedCustomerCode ? undefined : handleScopeChange}
                 onSend={handleSend}
                 onFollowUp={handleFollowUp}
                 onPushToCanvas={handlePushToCanvas}
