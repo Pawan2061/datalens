@@ -218,6 +218,8 @@ function CreateUserModal({ onClose, onCreated, headers, scopeCustomers }: {
   const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
+    console.log(setCustomerSearch);
+    
     e.preventDefault();
     setError('');
     if (!name.trim() || !email.trim()) {
