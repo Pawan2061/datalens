@@ -445,7 +445,7 @@ export default function WorkspaceView() {
           />
 
           {lockedCustomerCode ? (
-            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
               <ChatPanel
                 session={activeSession}
                 isLoading={isLoading}

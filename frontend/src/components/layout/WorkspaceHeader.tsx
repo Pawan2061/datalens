@@ -25,13 +25,14 @@ export default function WorkspaceHeader({
         <span className="wv-header-workspace">{workspace.name}</span>
         {customerName && (
           <span style={{
-            fontSize: 12,
-            fontWeight: 500,
-            color: 'rgba(255,255,255,0.5)',
-            background: 'rgba(255,255,255,0.07)',
-            border: '1px solid rgba(255,255,255,0.1)',
+            fontSize: 11,
+            fontWeight: 600,
+            color: '#6366f1',
+            background: 'rgba(99,102,241,0.08)',
+            border: '1px solid rgba(99,102,241,0.2)',
             borderRadius: 6,
             padding: '2px 8px',
+            letterSpacing: '0.01em',
           }}>
             {customerName}
           </span>
