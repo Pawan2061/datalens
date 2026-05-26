@@ -63,6 +63,7 @@ async def create_user_for_customer(
     max_tokens_per_day: int = 0,
     max_cost_usd_per_month: float = 0.0,
     expiry_date: str = "",
+    password_hash: str = "",
 ) -> dict:
     """Create a new user bound to a customer. Caller must check for duplicates."""
     if not insight_db.is_ready:
@@ -79,6 +80,7 @@ async def create_user_for_customer(
         max_tokens_per_day=max_tokens_per_day,
         max_cost_usd_per_month=max_cost_usd_per_month,
         expiry_date=expiry_date,
+        password_hash=password_hash,
     )
     users = insight_db.container("users")
     users.create_item(user.model_dump())

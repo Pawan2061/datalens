@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.routes.users import get_admin_user
+from app.auth.password import hash_password
 from app.db.insight_db import insight_db
 from app.schemas.persistence import AdminUserCreate, AdminUserUpdate
 from app.services import user_management
@@ -13,8 +14,8 @@ router = APIRouter()
 
 
 def _clean(doc: dict) -> dict:
-    """Strip Cosmos DB metadata keys from a document."""
-    return {k: v for k, v in doc.items() if not k.startswith("_")}
+    """Strip Cosmos DB metadata and sensitive fields from a document."""
+    return {k: v for k, v in doc.items() if not k.startswith("_") and k != "password_hash"}
 
 
 # ── Create user (admin-driven) ──────────────────────────────────────
@@ -45,6 +46,8 @@ async def create_user(body: AdminUserCreate, admin: dict = Depends(get_admin_use
             detail="A user with this email already exists",
         )
 
+    password_hash = hash_password(body.password) if body.password else ""
+
     try:
         created = await user_management.create_user_for_customer(
             name=body.name,
@@ -56,6 +59,7 @@ async def create_user(body: AdminUserCreate, admin: dict = Depends(get_admin_use
             max_tokens_per_day=body.max_tokens_per_day,
             max_cost_usd_per_month=body.max_cost_usd_per_month,
             expiry_date=body.expiry_date,
+            password_hash=password_hash,
         )
     except Exception as exc:
         # Concurrent create_user calls with the same email lose to the
@@ -149,6 +153,8 @@ async def update_user(
 
     # Apply updates from the request body
     update_data = body.model_dump(exclude_none=True)
+    if "password" in update_data:
+        doc["password_hash"] = hash_password(update_data.pop("password"))
     for key, value in update_data.items():
         doc[key] = value
 

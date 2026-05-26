@@ -211,6 +211,7 @@ function CreateUserModal({ onClose, onCreated, headers, scopeCustomers }: {
 }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [customerCode, setCustomerCode] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
   const [role, setRole] = useState<'user' | 'manager' | 'admin'>('user');
@@ -245,6 +246,7 @@ function CreateUserModal({ onClose, onCreated, headers, scopeCustomers }: {
           customer_code: payloadCustomerCode,
           role,
           status: 'active',
+          password: password,
         }),
       });
       if (!response.ok) {
@@ -272,6 +274,7 @@ function CreateUserModal({ onClose, onCreated, headers, scopeCustomers }: {
         <form className="adm-modal-form" onSubmit={handleSubmit}>
           <label className="adm-modal-label">Name<input type="text" className="adm-modal-input" value={name} onChange={(e) => setName(e.target.value)} autoFocus required /></label>
           <label className="adm-modal-label">Email<input type="email" className="adm-modal-input" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
+          <label className="adm-modal-label">Password<input type="password" className="adm-modal-input" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Leave blank to set later via DB" autoComplete="new-password" /></label>
           <label className="adm-modal-label">Customer
             {scopeCustomers && scopeCustomers.length > 0 && role === 'user' ? (
               <select
