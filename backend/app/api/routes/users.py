@@ -172,24 +172,30 @@ async def get_manager_or_admin(
 # ── reCAPTCHA ────────────────────────────────────────────────────────
 
 async def _verify_recaptcha(token: str) -> bool | None:
-    """Verify reCAPTCHA v2 token.
+    """Verify reCAPTCHA Enterprise token via Assessment API.
 
-    Returns True (valid), False (invalid token), or None (network/service error).
-    Returns True immediately when secret is not configured (dev mode).
+    Returns True (valid, score >= 0.5), False (invalid/bot), None (network error).
+    Returns True immediately when Enterprise credentials are not configured (dev mode).
     """
-    secret = settings.recaptcha_secret_key
-    if not secret:
+    project_id = settings.recaptcha_project_id
+    api_key = settings.recaptcha_gcp_api_key
+    site_key = settings.recaptcha_enterprise_site_key
+    if not project_id or not api_key:
         return True
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "https://www.google.com/recaptcha/api/siteverify",
-                data={"secret": secret, "response": token},
+                f"https://recaptchaenterprise.googleapis.com/v1/projects/{project_id}/assessments?key={api_key}",
+                json={"event": {"token": token, "siteKey": site_key, "expectedAction": "LOGIN"}},
                 timeout=10,
             )
-            return bool(resp.json().get("success"))
+            data = resp.json()
+            if not data.get("tokenProperties", {}).get("valid", False):
+                return False
+            score = data.get("riskAnalysis", {}).get("score", 0.0)
+            return score >= 0.5
     except Exception:
-        return None  # network/service error — distinct from invalid token
+        return None
 
 
 # ── Routes ───────────────────────────────────────────────────────────

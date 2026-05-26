@@ -1,11 +1,21 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
-import ReCAPTCHA from "react-google-recaptcha";
 import { useAuthStore } from "../store/authStore";
 import type { FormEvent } from "react";
 
 const RECAPTCHA_SITE_KEY = import.meta.env.VITE_RECAPTCHA_SITE_KEY || "";
+
+declare global {
+  interface Window {
+    grecaptcha: {
+      enterprise: {
+        ready: (cb: () => void) => void;
+        execute: (siteKey: string, opts: { action: string }) => Promise<string>;
+      };
+    };
+  }
+}
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -13,9 +23,7 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [emailAddr, setEmailAddr] = useState("");
   const [password, setPassword] = useState("");
-  const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const recaptchaRef = useRef<ReCAPTCHA>(null);
 
   useEffect(() => {
     if (isAuthenticated && user) {
@@ -29,28 +37,47 @@ export default function LoginPage() {
     }
   }, [isAuthenticated, user, navigate]);
 
+  useEffect(() => {
+    if (!RECAPTCHA_SITE_KEY) return;
+    const id = "recaptcha-enterprise-script";
+    if (document.getElementById(id)) return;
+    const script = document.createElement("script");
+    script.id = id;
+    script.src = `https://www.google.com/recaptcha/enterprise.js?render=${RECAPTCHA_SITE_KEY}`;
+    script.async = true;
+    document.head.appendChild(script);
+  }, []);
+
+  const getRecaptchaToken = (): Promise<string> => {
+    if (!RECAPTCHA_SITE_KEY) return Promise.resolve("dev-bypass");
+    return new Promise((resolve, reject) => {
+      window.grecaptcha.enterprise.ready(async () => {
+        try {
+          const token = await window.grecaptcha.enterprise.execute(
+            RECAPTCHA_SITE_KEY,
+            { action: "LOGIN" }
+          );
+          resolve(token);
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
+  };
+
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
     if (!emailAddr.trim() || !password.trim()) {
       setError("Please enter your email and password.");
       return;
     }
-    // When no site key is configured (dev/CI), skip CAPTCHA and send a
-    // dummy token — the backend also bypasses verification when its secret
-    // key is unset, so the round-trip still works.
-    const token = RECAPTCHA_SITE_KEY ? recaptchaToken : "dev-bypass";
-    if (!token) {
-      setError("Please complete the CAPTCHA verification.");
-      return;
-    }
     setIsLoading(true);
     setError("");
     try {
+      const token = await getRecaptchaToken();
       await login(emailAddr.trim(), password, token);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
-      recaptchaRef.current?.reset();
-      setRecaptchaToken(null);
     } finally {
       setIsLoading(false);
     }
@@ -58,16 +85,13 @@ export default function LoginPage() {
 
   return (
     <div className="dl-login">
-      {/* Animated gradient background */}
       <div className="dl-login-bg">
         <div className="dl-login-orb dl-login-orb--1" />
         <div className="dl-login-orb dl-login-orb--2" />
         <div className="dl-login-orb dl-login-orb--3" />
       </div>
 
-      {/* Centered card */}
       <div className="dl-login-card">
-        {/* Logo */}
         <div className="dl-login-logo">
           <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
             <rect width="40" height="40" rx="12" fill="url(#dl-logo-grad)" />
@@ -131,22 +155,6 @@ export default function LoginPage() {
               outline: "none",
             }}
           />
-
-          {RECAPTCHA_SITE_KEY ? (
-            <div style={{ display: "flex", justifyContent: "center", margin: "4px 0" }}>
-              <ReCAPTCHA
-                ref={recaptchaRef}
-                sitekey={RECAPTCHA_SITE_KEY}
-                theme="dark"
-                onChange={(token: string | null) => setRecaptchaToken(token)}
-                onExpired={() => setRecaptchaToken(null)}
-              />
-            </div>
-          ) : (
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", textAlign: "center" }}>
-              CAPTCHA not configured (dev mode)
-            </div>
-          )}
 
           <button
             type="submit"

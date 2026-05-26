@@ -66,7 +66,10 @@ class Settings(BaseSettings):
     google_client_id: str = ""  # Google OAuth Client ID; override via GOOGLE_CLIENT_ID
     github_client_id: str = ""  # for GitHub SSO
     github_client_secret: str = ""
-    recaptcha_secret_key: str = ""  # Google reCAPTCHA v2 secret; override via RECAPTCHA_SECRET_KEY
+    recaptcha_secret_key: str = ""        # legacy v2 secret (unused when Enterprise is configured)
+    recaptcha_project_id: str = ""        # GCP project ID for Enterprise verification
+    recaptcha_gcp_api_key: str = ""       # GCP API key with reCAPTCHA Enterprise API enabled
+    recaptcha_enterprise_site_key: str = ""  # Enterprise site key (for token binding check)
 
     # DataLens persistence (PostgreSQL — Neon or any Postgres URL)
     database_url: str = ""  # e.g. postgresql+psycopg://user:pass@host/db
