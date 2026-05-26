@@ -55,6 +55,8 @@ interface AdminWorkspace {
   members: WorkspaceMember[];
   member_count: number;
   metrics: WorkspaceMetrics;
+  scopeCustomers?: { id: string; code: string; name: string }[];
+  scope_customers?: { id: string; code: string; name: string }[];
 }
 
 interface AdminStats {
@@ -988,7 +990,7 @@ export default function AdminDashboard() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const setActiveWorkspace = useWorkspaceStore((s) => s.setActiveWorkspace);
-  const storeWorkspaces = useWorkspaceStore((s) => s.workspaces);
+
 
   const openWorkspace = (id: string) => {
     setActiveWorkspace(id);
@@ -1118,12 +1120,12 @@ export default function AdminDashboard() {
     usage: 'Usage Logs',
   };
 
-  // Collect all unique scope customers from all workspaces in the store
+  // Collect all unique scope customers from admin workspaces (API returns scope_customers snake_case)
   const allScopeCustomers = (() => {
     const seen = new Set<string>();
     const result: { id: string; code: string; name: string }[] = [];
-    for (const ws of storeWorkspaces) {
-      for (const c of (ws.scopeCustomers || [])) {
+    for (const ws of workspaces) {
+      for (const c of (ws.scopeCustomers || ws.scope_customers || [])) {
         if (!seen.has(c.id)) { seen.add(c.id); result.push(c); }
       }
     }

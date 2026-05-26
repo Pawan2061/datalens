@@ -393,6 +393,7 @@ async def admin_workspaces(admin: dict = Depends(get_admin_user)):
             },
             "members": members_enriched,
             "member_count": len(members_enriched),
+            "scope_customers": ws.get("scope_customers", []),
             "metrics": {
                 "total_queries": metrics["queries"],
                 "total_tokens": metrics["tokens"],
