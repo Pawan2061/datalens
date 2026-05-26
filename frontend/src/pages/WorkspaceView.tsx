@@ -81,6 +81,15 @@ export default function WorkspaceView() {
     }
   }, [lockedCustomerCode]);
 
+  // Resolve display name for locked customer-scoped users
+  const lockedCustomerName = (() => {
+    if (!lockedCustomerCode) return '';
+    const sc = workspace?.scopeCustomers?.find(
+      (c) => c.id === lockedCustomerCode || c.code === lockedCustomerCode,
+    );
+    return sc?.name || sc?.code || lockedCustomerCode;
+  })();
+
   useEffect(() => {
     if (workspaceId) setActiveWorkspace(workspaceId);
   }, [workspaceId, setActiveWorkspace]);
@@ -412,6 +421,7 @@ export default function WorkspaceView() {
           workspace={workspace}
           activeConnection={activeConnection}
           onOpenConnectionDialog={() => setShowConnectionDialog(true)}
+          customerName={lockedCustomerName || undefined}
         />
         {/* <MetricsBar sessions={sessions} /> */}
 
@@ -434,8 +444,8 @@ export default function WorkspaceView() {
             onClearAllSessions={handleClearAllSessions}
           />
 
-          <SplitPanel
-            left={
+          {lockedCustomerCode ? (
+            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
               <ChatPanel
                 session={activeSession}
                 isLoading={isLoading}
@@ -443,7 +453,7 @@ export default function WorkspaceView() {
                 scopeCustomers={workspace?.scopeCustomers || []}
                 customerScope={customerScope}
                 customerScopeName={customerScopeName}
-                onScopeChange={lockedCustomerCode ? undefined : handleScopeChange}
+                onScopeChange={undefined}
                 onSend={handleSend}
                 onFollowUp={handleFollowUp}
                 onPushToCanvas={handlePushToCanvas}
@@ -451,21 +461,41 @@ export default function WorkspaceView() {
                 onFeedback={handleFeedback}
                 compact={true}
               />
-            }
-            right={
-              <CanvasPanel
-                workspaceId={workspaceId!}
-                activeSessionId={activeSession?.id || null}
-                onFollowUp={handleFollowUp}
-                canvasTitle={canvasTitle}
-                onRefreshCanvas={handleRefreshCanvas}
-                isRefreshing={isRefreshing}
-              />
-            }
-            defaultLeftWidth={540}
-            minLeftWidth={360}
-            minRightWidth={340}
-          />
+            </div>
+          ) : (
+            <SplitPanel
+              left={
+                <ChatPanel
+                  session={activeSession}
+                  isLoading={isLoading}
+                  hasConnection={hasConnection}
+                  scopeCustomers={workspace?.scopeCustomers || []}
+                  customerScope={customerScope}
+                  customerScopeName={customerScopeName}
+                  onScopeChange={handleScopeChange}
+                  onSend={handleSend}
+                  onFollowUp={handleFollowUp}
+                  onPushToCanvas={handlePushToCanvas}
+                  onDeleteMessage={handleDeleteMessage}
+                  onFeedback={handleFeedback}
+                  compact={true}
+                />
+              }
+              right={
+                <CanvasPanel
+                  workspaceId={workspaceId!}
+                  activeSessionId={activeSession?.id || null}
+                  onFollowUp={handleFollowUp}
+                  canvasTitle={canvasTitle}
+                  onRefreshCanvas={handleRefreshCanvas}
+                  isRefreshing={isRefreshing}
+                />
+              }
+              defaultLeftWidth={540}
+              minLeftWidth={360}
+              minRightWidth={340}
+            />
+          )}
         </div>
       </div>
 

@@ -8,12 +8,14 @@ interface WorkspaceHeaderProps {
   workspace: Workspace;
   activeConnection: ConnectionInfo | null;
   onOpenConnectionDialog: () => void;
+  customerName?: string;
 }
 
 export default function WorkspaceHeader({
   workspace,
   activeConnection,
   onOpenConnectionDialog,
+  customerName,
 }: WorkspaceHeaderProps) {
   const isPrivileged = useAuthStore((s) => s.isPrivileged);
 
@@ -21,6 +23,19 @@ export default function WorkspaceHeader({
     <header className="wv-header">
       <div className="wv-header-left">
         <span className="wv-header-workspace">{workspace.name}</span>
+        {customerName && (
+          <span style={{
+            fontSize: 12,
+            fontWeight: 500,
+            color: 'rgba(255,255,255,0.5)',
+            background: 'rgba(255,255,255,0.07)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: 6,
+            padding: '2px 8px',
+          }}>
+            {customerName}
+          </span>
+        )}
         {activeConnection && (
           <ProfileStatus
             workspaceId={workspace.id}

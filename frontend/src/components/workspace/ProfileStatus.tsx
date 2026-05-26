@@ -190,14 +190,21 @@ export default function ProfileStatus({
 
       {status === 'ready' && (
         <>
-          <button
-            className="profile-status-view"
-            onClick={() => setViewerOpen(true)}
-            title="View data profile"
-          >
-            <Brain size={14} className="profile-status-icon" />
-            <span className="profile-status-text">Data profiled</span>
-          </button>
+          {readOnly ? (
+            <span className="profile-status-view" style={{ cursor: 'default', pointerEvents: 'none' }}>
+              <Brain size={14} className="profile-status-icon" />
+              <span className="profile-status-text">Data profiled</span>
+            </span>
+          ) : (
+            <button
+              className="profile-status-view"
+              onClick={() => setViewerOpen(true)}
+              title="View data profile"
+            >
+              <Brain size={14} className="profile-status-icon" />
+              <span className="profile-status-text">Data profiled</span>
+            </button>
+          )}
           {!readOnly && (
             <button
               className="profile-status-refresh"
