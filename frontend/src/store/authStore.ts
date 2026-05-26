@@ -32,9 +32,7 @@ interface AuthState {
   isPrivileged: boolean;  // admin or manager
   isPending: boolean;
   isCustomerScoped: boolean;  // non-admin bound to a customer_code
-  login: (name: string, email: string) => Promise<void>;
-  loginWithGoogle: (credential: string) => Promise<void>;
-  loginWithGitHub: (code: string) => Promise<void>;
+  login: (email: string, password: string, recaptchaToken: string) => Promise<void>;
   refreshUser: () => Promise<void>;
   logout: () => void;
 }
@@ -89,31 +87,13 @@ export const useAuthStore = create<AuthState>()(
       isPending: false,
       isCustomerScoped: false,
 
-      login: async (name: string, email: string) => {
+      login: async (email: string, password: string, recaptchaToken: string) => {
         const response = await fetch(`${API_BASE}/api/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, email }),
+          body: JSON.stringify({ email, password, recaptcha_token: recaptchaToken }),
         });
         await applyAuthResponse(response, set, 'Login failed');
-      },
-
-      loginWithGoogle: async (credential: string) => {
-        const response = await fetch(`${API_BASE}/api/auth/google`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credential }),
-        });
-        await applyAuthResponse(response, set, 'Google sign-in failed');
-      },
-
-      loginWithGitHub: async (code: string) => {
-        const response = await fetch(`${API_BASE}/api/auth/github`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code }),
-        });
-        await applyAuthResponse(response, set, 'GitHub sign-in failed');
       },
 
       refreshUser: async () => {
