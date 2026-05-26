@@ -58,6 +58,13 @@ def _verify_workspace_access(workspace_doc: dict, current_user: dict, require_ow
     if email in member_emails:
         return  # Member has access
 
+    # Check customer_code against workspace scope_customers
+    customer_code = current_user.get("customer_code", "")
+    if customer_code:
+        for sc in workspace_doc.get("scope_customers", []):
+            if customer_code in (sc.get("id", ""), sc.get("code", "")):
+                return  # Customer-scoped user has access
+
     raise HTTPException(status_code=403, detail="Access denied to this workspace")
 
 
@@ -116,15 +123,23 @@ async def list_workspaces(current_user: dict = Depends(get_current_user)):
         # Sort by last_active_at desc
         results.sort(key=lambda w: w.get("last_active_at", ""), reverse=True)
     else:
-        # Regular user: only workspaces where their email is in members
+        # Regular user: workspaces where their email is in members OR
+        # their customer_code matches a scope_customer on the workspace
+        customer_code = current_user.get("customer_code", "")
         all_ws = list(container.query_items(
             query="SELECT * FROM c",
             enable_cross_partition_query=True,
         ))
-        results = [
-            ws for ws in all_ws
-            if email in [m.get("email", "") if isinstance(m, dict) else m for m in ws.get("members", [])]
-        ]
+        def _user_can_see(ws: dict) -> bool:
+            member_emails = [m.get("email", "") if isinstance(m, dict) else m for m in ws.get("members", [])]
+            if email in member_emails:
+                return True
+            if customer_code:
+                for sc in ws.get("scope_customers", []):
+                    if customer_code in (sc.get("id", ""), sc.get("code", "")):
+                        return True
+            return False
+        results = [ws for ws in all_ws if _user_can_see(ws)]
         results.sort(key=lambda w: w.get("last_active_at", ""), reverse=True)
 
     return [_clean(doc) for doc in results]
