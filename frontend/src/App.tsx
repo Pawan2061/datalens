@@ -1,4 +1,4 @@
-import { Component, type ReactNode } from 'react';
+import { Component, useEffect, useState, type ReactNode } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
 
@@ -95,9 +95,15 @@ function ProtectedRoute({ children, adminOnly = false, privilegedOnly = false }:
 function HomeRoute() {
   const user = useAuthStore((s) => s.user);
   const workspaces = useWorkspaceStore((s) => s.workspaces);
-  // Admins & managers land on the admin panel.
+  const loadWorkspacesFromBackend = useWorkspaceStore((s) => s.loadWorkspacesFromBackend);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadWorkspacesFromBackend().finally(() => setLoading(false));
+  }, [loadWorkspacesFromBackend]);
+
   if (user?.role === 'admin' || user?.role === 'manager') return <Navigate to="/admin" replace />;
-  // Regular customers go straight to a workspace — never the admin UI.
+  if (loading) return null;
   const first = workspaces[0]?.id || DEFAULT_WORKSPACE_ID;
   return <Navigate to={`/workspace/${first}`} replace />;
 }
