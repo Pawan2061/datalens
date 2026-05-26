@@ -138,7 +138,7 @@ export default function LoginPage() {
                 ref={recaptchaRef}
                 sitekey={RECAPTCHA_SITE_KEY}
                 theme="dark"
-                onChange={(token) => setRecaptchaToken(token)}
+                onChange={(token: string | null) => setRecaptchaToken(token)}
                 onExpired={() => setRecaptchaToken(null)}
               />
             </div>
