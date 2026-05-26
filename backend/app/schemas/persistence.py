@@ -39,19 +39,13 @@ class UserDoc(BaseModel):
 
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     last_login_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    password_hash: str = ""
 
 
 class LoginRequest(BaseModel):
-    name: str
     email: str
-
-
-class GoogleLoginRequest(BaseModel):
-    credential: str  # Google ID token
-
-
-class GitHubLoginRequest(BaseModel):
-    code: str  # GitHub OAuth authorization code
+    password: str
+    recaptcha_token: str
 
 
 class LoginResponse(BaseModel):
@@ -67,6 +61,7 @@ class AdminUserUpdate(BaseModel):
     max_tokens_per_day: int | None = None
     max_cost_usd_per_month: float | None = None
     expiry_date: str | None = None
+    password: str | None = None  # if set, hashed and stored as password_hash
 
 
 class AdminUserCreate(BaseModel):
@@ -79,6 +74,7 @@ class AdminUserCreate(BaseModel):
     max_tokens_per_day: int = 0
     max_cost_usd_per_month: float = 0.0
     expiry_date: str = ""
+    password: str = ""  # plain-text; will be hashed before storage; empty = no password set
 
 
 class UsageRecord(BaseModel):

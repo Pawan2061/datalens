@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     google_client_id: str = ""  # Google OAuth Client ID; override via GOOGLE_CLIENT_ID
     github_client_id: str = ""  # for GitHub SSO
     github_client_secret: str = ""
+    recaptcha_secret_key: str = ""  # Google reCAPTCHA v2 secret; override via RECAPTCHA_SECRET_KEY
 
     # DataLens persistence (PostgreSQL — Neon or any Postgres URL)
     database_url: str = ""  # e.g. postgresql+psycopg://user:pass@host/db

@@ -10,9 +10,8 @@ from app.config import settings
 from app.db.insight_db import insight_db
 import httpx
 
+from app.auth.password import verify_password
 from app.schemas.persistence import (
-    GitHubLoginRequest,
-    GoogleLoginRequest,
     LoginRequest,
     LoginResponse,
     UserDoc,
@@ -25,7 +24,6 @@ router = APIRouter()
 JWT_SECRET = settings.jwt_secret or "datalens-dev-secret-change-me"
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 72
-ADMIN_EMAIL = settings.admin_email
 
 
 def _create_jwt(user_id: str, email: str, role: str) -> str:
@@ -45,49 +43,10 @@ def _decode_jwt(token: str) -> dict:
 
 # ── Legacy base64 token helpers (backward compat) ───────────────────
 
-def _make_token(user_id: str, email: str) -> str:
-    raw = f"{user_id}:{email}"
-    return base64.b64encode(raw.encode()).decode()
-
-
 def _decode_legacy_token(token: str) -> tuple[str, str]:
     raw = base64.b64decode(token.encode()).decode()
     parts = raw.split(":", 1)
     return parts[0], parts[1]
-
-
-# ── Determine if a user should be auto-admin ────────────────────────
-
-def _should_be_admin(email: str) -> bool:
-    """Return True if this email should get admin role."""
-    if ADMIN_EMAIL and email.strip().lower() == ADMIN_EMAIL.strip().lower():
-        return True
-    return False
-
-
-async def _is_first_user() -> bool:
-    """Check if there are zero users in the database."""
-    if not insight_db.is_ready:
-        return False
-    users = insight_db.container("users")
-    results = list(
-        users.query_items(query="SELECT * FROM c", enable_cross_partition_query=True)
-    )
-    return len(results) == 0
-
-
-async def _check_can_create_on_login(email: str) -> bool:
-    """Decide whether login should auto-create an account.
-
-    Self-signup is closed: only the first-ever user OR the configured
-    ADMIN_EMAIL may be auto-created. Everyone else must be pre-created by
-    an admin via /api/admin/users.
-    """
-    if await _is_first_user():
-        return True
-    if _should_be_admin(email):
-        return True
-    return False
 
 
 # ── Dependencies ─────────────────────────────────────────────────────
@@ -188,8 +147,8 @@ async def get_current_user(authorization: str = Header(None)) -> dict:
     if changed:
         users.upsert_item(doc)
 
-    # Return clean dict (strip Cosmos metadata)
-    return {k: v for k, v in doc.items() if not k.startswith("_")}
+    # Return clean dict (strip Cosmos metadata and sensitive fields)
+    return {k: v for k, v in doc.items() if not k.startswith("_") and k != "password_hash"}
 
 
 async def get_admin_user(
@@ -210,6 +169,29 @@ async def get_manager_or_admin(
     return current_user
 
 
+# ── reCAPTCHA ────────────────────────────────────────────────────────
+
+async def _verify_recaptcha(token: str) -> bool | None:
+    """Verify reCAPTCHA v2 token.
+
+    Returns True (valid), False (invalid token), or None (network/service error).
+    Returns True immediately when secret is not configured (dev mode).
+    """
+    secret = settings.recaptcha_secret_key
+    if not secret:
+        return True
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://www.google.com/recaptcha/api/siteverify",
+                data={"secret": secret, "response": token},
+                timeout=10,
+            )
+            return bool(resp.json().get("success"))
+    except Exception:
+        return None  # network/service error — distinct from invalid token
+
+
 # ── Routes ───────────────────────────────────────────────────────────
 
 @router.post("/api/auth/login", response_model=LoginResponse)
@@ -217,222 +199,33 @@ async def login(req: LoginRequest):
     if not insight_db.is_ready:
         raise HTTPException(status_code=503, detail="Persistence not configured")
 
+    captcha = await _verify_recaptcha(req.recaptcha_token)
+    if captcha is None:
+        raise HTTPException(status_code=503, detail="CAPTCHA service unavailable. Please try again.")
+    if not captcha:
+        raise HTTPException(status_code=400, detail="CAPTCHA verification failed. Please try again.")
+
     users = insight_db.container("users")
     email_lower = req.email.strip().lower()
 
-    # Try to find existing user by email (partition key query)
     query = "SELECT * FROM c WHERE c.email = @email"
     params = [{"name": "@email", "value": email_lower}]
     results = list(
-        users.query_items(
-            query=query, parameters=params, partition_key=email_lower
-        )
+        users.query_items(query=query, parameters=params, partition_key=email_lower)
     )
 
-    now = datetime.now(timezone.utc).isoformat()
+    _invalid = HTTPException(status_code=401, detail="Invalid email or password.")
 
-    if results:
-        user_doc = results[0]
-        user_doc["last_login_at"] = now
-        user_doc["name"] = req.name.strip()
-        users.upsert_item(user_doc)
-        user = UserDoc(**{k: v for k, v in user_doc.items() if not k.startswith("_")})
-    else:
-        # Self-signup is closed — only the first-ever user or the configured
-        # ADMIN_EMAIL may bootstrap themselves. Everyone else must be created
-        # by an admin via POST /api/admin/users.
-        if not await _check_can_create_on_login(email_lower):
-            raise HTTPException(
-                status_code=403,
-                detail="No account found for this email. Please contact your administrator.",
-            )
-        is_admin = True  # only first-user / ADMIN_EMAIL reach here
-        user = UserDoc(
-            email=email_lower,
-            name=req.name.strip(),
-            role="admin",
-            status="active",
-        )
-        users.create_item(user.model_dump())
+    if not results:
+        raise _invalid
 
-    token = _create_jwt(user.id, user.email, user.role)
-    return LoginResponse(user=user, token=token)
+    user_doc = results[0]
+    if not verify_password(req.password, user_doc.get("password_hash", "")):
+        raise _invalid
 
-
-@router.post("/api/auth/google", response_model=LoginResponse)
-async def google_login(req: GoogleLoginRequest):
-    """Google SSO login. Verifies the Google ID token and creates/finds user."""
-    if not insight_db.is_ready:
-        raise HTTPException(status_code=503, detail="Persistence not configured")
-
-    google_client_id = settings.google_client_id
-    if not google_client_id:
-        raise HTTPException(
-            status_code=501,
-            detail="Google SSO not configured (GOOGLE_CLIENT_ID not set)",
-        )
-
-    # Verify the Google ID token
-    try:
-        from google.oauth2 import id_token
-        from google.auth.transport import requests as google_requests
-
-        idinfo = id_token.verify_oauth2_token(
-            req.credential,
-            google_requests.Request(),
-            google_client_id,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Invalid Google token: {e}")
-
-    email = idinfo.get("email", "").strip().lower()
-    name = idinfo.get("name", email.split("@")[0])
-    picture = idinfo.get("picture", "")
-
-    if not email:
-        raise HTTPException(status_code=400, detail="No email in Google token")
-
-    users = insight_db.container("users")
-    now = datetime.now(timezone.utc).isoformat()
-
-    # Find existing user
-    query = "SELECT * FROM c WHERE c.email = @email"
-    params = [{"name": "@email", "value": email}]
-    results = list(
-        users.query_items(query=query, parameters=params, partition_key=email)
-    )
-
-    if results:
-        user_doc = results[0]
-        user_doc["last_login_at"] = now
-        user_doc["name"] = name
-        if picture:
-            user_doc["avatar_url"] = picture
-        users.upsert_item(user_doc)
-        user = UserDoc(**{k: v for k, v in user_doc.items() if not k.startswith("_")})
-    else:
-        if not await _check_can_create_on_login(email):
-            raise HTTPException(
-                status_code=403,
-                detail="No account found for this email. Please contact your administrator.",
-            )
-        user = UserDoc(
-            email=email,
-            name=name,
-            avatar_url=picture,
-            role="admin",
-            status="active",
-        )
-        users.create_item(user.model_dump())
-
-    token = _create_jwt(user.id, user.email, user.role)
-    return LoginResponse(user=user, token=token)
-
-
-@router.post("/api/auth/github", response_model=LoginResponse)
-async def github_login(req: GitHubLoginRequest):
-    """GitHub SSO login. Exchanges code for access token, fetches profile."""
-    if not insight_db.is_ready:
-        raise HTTPException(status_code=503, detail="Persistence not configured")
-
-    gh_client_id = settings.github_client_id
-    gh_client_secret = settings.github_client_secret
-    if not gh_client_id or not gh_client_secret:
-        raise HTTPException(
-            status_code=501,
-            detail="GitHub SSO not configured (GITHUB_CLIENT_ID / SECRET not set)",
-        )
-
-    # Exchange code for access token
-    try:
-        async with httpx.AsyncClient() as client:
-            token_resp = await client.post(
-                "https://github.com/login/oauth/access_token",
-                json={
-                    "client_id": gh_client_id,
-                    "client_secret": gh_client_secret,
-                    "code": req.code,
-                },
-                headers={"Accept": "application/json"},
-                timeout=15,
-            )
-            token_data = token_resp.json()
-            access_token = token_data.get("access_token")
-            if not access_token:
-                raise HTTPException(
-                    status_code=401,
-                    detail=f"GitHub token exchange failed: {token_data.get('error_description', 'unknown')}",
-                )
-
-            # Fetch user profile
-            user_resp = await client.get(
-                "https://api.github.com/user",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/json",
-                },
-                timeout=10,
-            )
-            gh_user = user_resp.json()
-
-            # Fetch primary email (may be private)
-            email = gh_user.get("email") or ""
-            if not email:
-                emails_resp = await client.get(
-                    "https://api.github.com/user/emails",
-                    headers={
-                        "Authorization": f"Bearer {access_token}",
-                        "Accept": "application/json",
-                    },
-                    timeout=10,
-                )
-                for e in emails_resp.json():
-                    if e.get("primary"):
-                        email = e["email"]
-                        break
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"GitHub auth failed: {e}")
-
-    name = gh_user.get("name") or gh_user.get("login", "")
-    avatar = gh_user.get("avatar_url", "")
-    email = email.strip().lower()
-
-    if not email:
-        raise HTTPException(status_code=400, detail="Could not get email from GitHub")
-
-    users = insight_db.container("users")
-    now = datetime.now(timezone.utc).isoformat()
-
-    query = "SELECT * FROM c WHERE c.email = @email"
-    params = [{"name": "@email", "value": email}]
-    results = list(
-        users.query_items(query=query, parameters=params, partition_key=email)
-    )
-
-    if results:
-        user_doc = results[0]
-        user_doc["last_login_at"] = now
-        user_doc["name"] = name
-        if avatar:
-            user_doc["avatar_url"] = avatar
-        users.upsert_item(user_doc)
-        user = UserDoc(**{k: v for k, v in user_doc.items() if not k.startswith("_")})
-    else:
-        if not await _check_can_create_on_login(email):
-            raise HTTPException(
-                status_code=403,
-                detail="No account found for this email. Please contact your administrator.",
-            )
-        user = UserDoc(
-            email=email,
-            name=name,
-            avatar_url=avatar,
-            role="admin",
-            status="active",
-        )
-        users.create_item(user.model_dump())
+    user_doc["last_login_at"] = datetime.now(timezone.utc).isoformat()
+    users.upsert_item(user_doc)
+    user = UserDoc(**{k: v for k, v in user_doc.items() if not k.startswith("_") and k != "password_hash"})
 
     token = _create_jwt(user.id, user.email, user.role)
     return LoginResponse(user=user, token=token)
