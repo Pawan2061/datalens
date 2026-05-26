@@ -9,10 +9,12 @@ COPY . .
 # Accept build-time env vars for Vite
 ARG VITE_API_URL
 ARG VITE_GOOGLE_CLIENT_ID
+ARG VITE_RECAPTCHA_SITE_KEY
 # Write .env.production so Vite picks them up
 RUN if [ -n "$VITE_API_URL" ]; then \
       echo "VITE_API_URL=$VITE_API_URL" > .env.production; \
       echo "VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID" >> .env.production; \
+      echo "VITE_RECAPTCHA_SITE_KEY=$VITE_RECAPTCHA_SITE_KEY" >> .env.production; \
     fi
 RUN npm run build
 
