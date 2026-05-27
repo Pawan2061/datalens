@@ -323,7 +323,14 @@ class InsightDB:
 
         try:
             from psycopg_pool import ConnectionPool
-            self._pool = ConnectionPool(dsn, min_size=1, max_size=5, open=True)
+            self._pool = ConnectionPool(
+                dsn,
+                min_size=1,
+                max_size=5,
+                open=True,
+                max_idle=240,       # recycle idle connections every 4 min (Neon closes at 5 min)
+                max_lifetime=3600,  # recycle connections older than 1 hour regardless
+            )
 
             # Create tables — execute each statement individually (psycopg3
             # does not allow multiple statements in a single execute() call)
