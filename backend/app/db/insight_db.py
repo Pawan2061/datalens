@@ -323,7 +323,7 @@ class InsightDB:
 
         try:
             from psycopg_pool import ConnectionPool
-            self._pool = ConnectionPool(dsn, min_size=1, max_size=10, open=True)
+            self._pool = ConnectionPool(dsn, min_size=1, max_size=10, open=True, max_idle=240)
 
             # Create tables — execute each statement individually (psycopg3
             # does not allow multiple statements in a single execute() call)
