@@ -122,6 +122,7 @@ class ApiToolConfig(BaseModel):
     input_parameters: list[ApiToolParam] = []  # What the LLM must provide
     response_path: str = ""  # dot-notation path to extract data array (e.g. "PIECE_DETAILS")
     response_fields: list[str] = []  # Expected field names in response items
+    excluded_columns: list[str] = []  # Column names to strip from every response row before sending to the LLM and UI (e.g. ["RACK_NO", "PIECE_NO"])
     balance_column: str = ""  # Column name whose total = the primary outstanding/balance figure (e.g. "BALANCE_AMOUNT"). When set, its sum is exposed as primary_balance_total so the synthesis LLM never has to guess which column is the balance vs the invoice amount.
     enabled: bool = True
     test_status: str = "untested"  # "untested", "success", "failed"

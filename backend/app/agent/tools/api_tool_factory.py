@@ -254,7 +254,9 @@ def _build_success(
     response_path: str,
     duration_ms: float,
     balance_column: str = "",
+    excluded_columns: list[str] | None = None,
 ) -> str:
+    excluded = set(excluded_columns or [])
     extracted = _extract_nested(data, response_path)
 
     if isinstance(extracted, list):
@@ -269,7 +271,11 @@ def _build_success(
     else:
         rows = [{"value": extracted}]
 
-    columns = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
+    # Strip excluded columns from every row so they never reach the LLM or UI.
+    if excluded:
+        rows = [{k: v for k, v in r.items() if k not in excluded} if isinstance(r, dict) else r for r in rows]
+
+    columns = [c for c in (list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []) if c not in excluded]
 
     # Pre-compute numeric column totals across ALL rows before capping so the
     # synthesis LLM always has accurate aggregates regardless of row cap.
@@ -398,6 +404,7 @@ def create_api_tool(
     input_params = config.get("input_parameters", []) or []
     response_path = config.get("response_path", "")
     balance_column = config.get("balance_column", "") or ""
+    excluded_columns: list[str] = config.get("excluded_columns", []) or []
     timeout = float(config.get("timeout_seconds", 30))
     body_template = config.get("body_template", "")
     extra_headers = config.get("headers", {}) or {}
@@ -532,7 +539,7 @@ def create_api_tool(
         if result_code and result_code != "PASS":
             return _build_error(api_name, f"API returned: {result_msg}", duration_ms)
 
-        return _build_success(api_name, data, response_path, duration_ms, balance_column)
+        return _build_success(api_name, data, response_path, duration_ms, balance_column, excluded_columns)
 
     async def _call_two_step(kwargs: dict) -> str:
         start = time.perf_counter()
@@ -588,7 +595,7 @@ def create_api_tool(
             msg = result.get("RESULT_MSG") or result.get("message") or "Non-success response"
             return _build_error(api_name, f"API returned: {msg}", duration_ms)
 
-        return _build_success(api_name, result, response_path, duration_ms, balance_column)
+        return _build_success(api_name, result, response_path, duration_ms, balance_column, excluded_columns)
 
     async def _call_api(**kwargs: str) -> str:
         if auth_mode == "two_step_token":
