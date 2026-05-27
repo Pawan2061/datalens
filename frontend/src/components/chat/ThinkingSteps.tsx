@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Check, Loader2, AlertCircle, Brain, Database, BarChart3, Sparkles, Code2, MessageSquare, Globe } from 'lucide-react';
 import type { AgentStep } from '../../types/chat';
+import { useAuthStore } from '../../store/authStore';
 
 interface ThinkingStepsProps {
   steps: AgentStep[];
@@ -103,6 +104,7 @@ export default function ThinkingSteps({ steps, isStreaming }: ThinkingStepsProps
   const [expanded, setExpanded] = useState(false);
   const [expandedDetail, setExpandedDetail] = useState<number | null>(null);
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
+  const isPrivileged = useAuthStore((s) => s.isPrivileged);
 
   const hasAnySql = steps.some((step) => !!step.sql);
 
@@ -124,7 +126,7 @@ export default function ThinkingSteps({ steps, isStreaming }: ThinkingStepsProps
 
       {expanded && (
         <div className="ts-steps">
-          {hasAnySql && (
+          {hasAnySql && isPrivileged && (
             <div className="ts-tech-row">
               <button
                 onClick={() => {
@@ -165,7 +167,7 @@ export default function ThinkingSteps({ steps, isStreaming }: ThinkingStepsProps
             const hasSql = !!step.sql;
             const parsed = tryParse(step);
             const errorDetail = (parsed?.error_detail as string) || '';
-            const hasExpandable = hasReasoning || (showTechnicalDetails && hasSql) || (isError && errorDetail);
+            const hasExpandable = hasReasoning || (isPrivileged && showTechnicalDetails && hasSql) || (isError && errorDetail);
 
             return (
               <div key={i} className={`ts-step ${isReasoning(step) ? 'ts-step--reasoning' : ''}`}>
