@@ -8,7 +8,7 @@ services:
       - backend/.env
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request, sys; urllib.request.urlopen('http://localhost:8080/health', timeout=5); sys.exit(0)"]
       interval: 30s
       timeout: 10s
       retries: 3
