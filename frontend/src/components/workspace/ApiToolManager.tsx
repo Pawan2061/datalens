@@ -21,7 +21,7 @@ function emptyTool(): Partial<ApiToolConfig> {
   return {
     name: '', tool_name: '', description: '', endpoint_url: '', req_code: '',
     method: 'POST', auth_config: { apikey: '', token: '' },
-    input_parameters: [], response_path: '', response_fields: [], balance_column: '',
+    input_parameters: [], response_path: '', response_fields: [], excluded_columns: [], balance_column: '',
     enabled: true, timeout_seconds: 30,
     auth_mode: 'static',
     token_endpoint: '', token_response_path: 'AUTH_TOKEN',
@@ -479,6 +479,19 @@ export default function ApiToolManager({ workspaceId, onClose }: ApiToolManagerP
                     onChange={(e) => setEditTool({ ...editTool, balance_column: e.target.value })}
                     placeholder="e.g. BAL_AMT (column whose total = outstanding balance)"
                     title="When set, this column's sum is exposed as primary_balance_total so the AI always quotes the right figure for outstanding/bakaya queries."
+                  />
+                </div>
+
+                <div className="atm-form-row">
+                  <label>Excluded Columns (comma-separated)</label>
+                  <input
+                    value={(editTool.excluded_columns || []).join(', ')}
+                    onChange={(e) => setEditTool({
+                      ...editTool,
+                      excluded_columns: e.target.value.split(',').map(s => s.trim()).filter(Boolean),
+                    })}
+                    placeholder="e.g. RACK_NO, PIECE_NO, GRN_DATE, LOT_NO"
+                    title="Columns listed here are removed from every API response before the AI sees them — they will never appear in chat tables."
                   />
                 </div>
 
