@@ -1,4 +1,4 @@
-import { Component, useEffect, useState, type ReactNode } from 'react';
+import { Component, useCallback, useEffect, type ReactNode } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
 
@@ -108,9 +108,45 @@ function HomeRoute() {
   return <Navigate to={`/workspace/${first}`} replace />;
 }
 
+function isJwtExpired(token: string): boolean {
+  try {
+    const exp = JSON.parse(atob(token.split('.')[1]))?.exp;
+    return typeof exp === 'number' && Date.now() / 1000 > exp;
+  } catch {
+    return false; // Can't decode — let the server reject it via 401
+  }
+}
+
+// Guards against stale sessions without a blocking network round-trip.
+// Checks JWT expiry client-side on mount and whenever the user returns
+// to the tab. The apiFetch 401 handler covers mid-request expiry.
+function SessionGuard({ children }: { children: ReactNode }) {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const logout = useAuthStore((s) => s.logout);
+
+  const checkExpiry = useCallback(() => {
+    if (!isAuthenticated) return;
+    try {
+      const stored = localStorage.getItem('datalens-auth');
+      const token = stored ? JSON.parse(stored)?.state?.token : null;
+      if (token && isJwtExpired(token)) logout();
+    } catch { /* ignore parse errors */ }
+  }, [isAuthenticated, logout]);
+
+  useEffect(() => {
+    checkExpiry();
+    const onFocus = () => { if (document.visibilityState === 'visible') checkExpiry(); };
+    document.addEventListener('visibilitychange', onFocus);
+    return () => document.removeEventListener('visibilitychange', onFocus);
+  }, [checkExpiry]);
+
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
+      <SessionGuard>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/pending" element={<PendingApprovalPage />} />
@@ -119,6 +155,7 @@ export default function App() {
         <Route path="/" element={<ProtectedRoute><HomeRoute /></ProtectedRoute>} />
         <Route path="/workspace/:workspaceId" element={<ProtectedRoute><ErrorBoundary><WorkspaceView /></ErrorBoundary></ProtectedRoute>} />
       </Routes>
+      </SessionGuard>
     </ErrorBoundary>
   );
 }

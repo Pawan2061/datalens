@@ -1,5 +1,6 @@
 import type { ConnectionConfig, ConnectionInfo, ConnectorType, SchemaInfo } from '../types/connection';
 import { API_BASE } from './apiBase';
+import { useAuthStore } from '../store/authStore';
 
 function getAuthHeaders(): Record<string, string> {
   try {
@@ -11,6 +12,36 @@ function getAuthHeaders(): Record<string, string> {
     }
   } catch { /* ignore */ }
   return {};
+}
+
+// Thrown when the server returns 401. Callers can ignore it since the
+// auth store is cleared immediately and ProtectedRoute will redirect to /login.
+export class SessionExpiredError extends Error {
+  constructor() {
+    super('Your session has expired. Please log in again.');
+    this.name = 'SessionExpiredError';
+  }
+}
+
+// All authenticated API calls go through here. Merges auth headers
+// automatically and handles 401 by logging the user out.
+async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers as Record<string, string> ?? {}),
+      ...getAuthHeaders(),
+    },
+  });
+  if (response.status === 401) {
+    // Only act once: after the first 401 clears isAuthenticated, ProtectedRoute
+    // has already queued a redirect, so subsequent concurrent 401s are no-ops.
+    if (useAuthStore.getState().isAuthenticated) {
+      useAuthStore.getState().logout();
+    }
+    throw new SessionExpiredError();
+  }
+  return response;
 }
 
 export interface HistoryMessage {
@@ -28,9 +59,9 @@ export async function sendMessage(
   customerScope: string = '',
   customerScopeName: string = ''
 ): Promise<{ session_id: string; status: string }> {
-  const response = await fetch(`${API_BASE}/api/chat`, {
+  const response = await apiFetch(`${API_BASE}/api/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       session_id: sessionId,
       message,
@@ -76,9 +107,9 @@ export async function sendDataEmail(
   tables: unknown[],
   charts: unknown[],
 ): Promise<void> {
-  const resp = await fetch(`${API_BASE}/api/email/send-data`, {
+  const resp = await apiFetch(`${API_BASE}/api/email/send-data`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       to_email: toEmail,
       insight_title: insightTitle,
@@ -246,9 +277,7 @@ export async function getConnectionSchema(connectionId: string): Promise<SchemaI
 
 // Workspaces
 export async function fetchWorkspaces(): Promise<Record<string, unknown>[]> {
-  const response = await fetch(`${API_BASE}/api/workspaces`, {
-    headers: { ...getAuthHeaders() },
-  });
+  const response = await apiFetch(`${API_BASE}/api/workspaces`);
   if (!response.ok) throw new Error('Failed to fetch workspaces');
   return response.json();
 }
@@ -260,9 +289,9 @@ export async function createWorkspaceOnBackend(data: {
   connections?: Record<string, unknown>[];
   connection_ids?: string[];
 }): Promise<Record<string, unknown>> {
-  const response = await fetch(`${API_BASE}/api/workspaces`, {
+  const response = await apiFetch(`${API_BASE}/api/workspaces`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
   if (!response.ok) throw new Error('Failed to create workspace');
@@ -273,9 +302,9 @@ export async function updateWorkspaceOnBackend(
   workspaceId: string,
   data: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
-  const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}`, {
+  const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
   if (!response.ok) throw new Error('Failed to update workspace');
@@ -283,9 +312,8 @@ export async function updateWorkspaceOnBackend(
 }
 
 export async function deleteWorkspaceOnBackend(workspaceId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}`, {
+  const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}`, {
     method: 'DELETE',
-    headers: { ...getAuthHeaders() },
   });
   if (!response.ok && response.status !== 204) throw new Error('Failed to delete workspace');
 }
@@ -294,9 +322,7 @@ export async function deleteWorkspaceOnBackend(workspaceId: string): Promise<voi
 export async function fetchSessionList(workspaceId: string): Promise<
   Array<{ id: string; title: string; created_at: string; updated_at: string }>
 > {
-  const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/sessions`, {
-    headers: { ...getAuthHeaders() },
-  });
+  const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/sessions`);
   if (!response.ok) throw new Error('Failed to fetch sessions');
   return response.json();
 }
@@ -305,9 +331,8 @@ export async function fetchSession(
   sessionId: string,
   workspaceId: string
 ): Promise<Record<string, unknown>> {
-  const response = await fetch(
-    `${API_BASE}/api/sessions/${sessionId}?workspace_id=${encodeURIComponent(workspaceId)}`,
-    { headers: { ...getAuthHeaders() } }
+  const response = await apiFetch(
+    `${API_BASE}/api/sessions/${sessionId}?workspace_id=${encodeURIComponent(workspaceId)}`
   );
   if (!response.ok) throw new Error('Failed to fetch session');
   return response.json();
@@ -317,9 +342,9 @@ export async function upsertSession(
   sessionId: string,
   data: { workspace_id: string; title: string; messages: Record<string, unknown>[] }
 ): Promise<Record<string, unknown>> {
-  const response = await fetch(`${API_BASE}/api/sessions/${sessionId}`, {
+  const response = await apiFetch(`${API_BASE}/api/sessions/${sessionId}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
   if (!response.ok) throw new Error('Failed to upsert session');
@@ -330,17 +355,16 @@ export async function deleteSessionOnBackend(
   sessionId: string,
   workspaceId: string
 ): Promise<void> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE}/api/sessions/${sessionId}?workspace_id=${encodeURIComponent(workspaceId)}`,
-    { method: 'DELETE', headers: { ...getAuthHeaders() } }
+    { method: 'DELETE' }
   );
   if (!response.ok) throw new Error('Failed to delete session');
 }
 
 export async function clearAllSessionsOnBackend(workspaceId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/sessions`, {
+  const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/sessions`, {
     method: 'DELETE',
-    headers: { ...getAuthHeaders() },
   });
   if (!response.ok) throw new Error('Failed to clear sessions');
 }
@@ -349,9 +373,7 @@ export async function clearAllSessionsOnBackend(workspaceId: string): Promise<vo
 export async function fetchCanvasState(
   workspaceId: string
 ): Promise<{ blocks: Record<string, unknown>[]; updated_at: string | null }> {
-  const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/canvas`, {
-    headers: { ...getAuthHeaders() },
-  });
+  const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/canvas`);
   if (!response.ok) throw new Error('Failed to fetch canvas');
   return response.json();
 }
@@ -360,9 +382,9 @@ export async function saveCanvasState(
   workspaceId: string,
   blocks: Record<string, unknown>[]
 ): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/canvas`, {
+  const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/canvas`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ blocks }),
   });
   if (!response.ok) throw new Error('Failed to save canvas');
@@ -374,11 +396,11 @@ export async function generateProfile(
   workspaceId: string,
   connectionId: string
 ): Promise<{ status: string }> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE}/api/workspaces/${workspaceId}/profile/generate`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ connection_id: connectionId }),
     }
   );
@@ -399,9 +421,8 @@ export async function getProfileStatus(
   workspaceId: string,
   connectionId: string
 ): Promise<{ status: string; generated_at?: string; error_message?: string }> {
-  const response = await fetch(
-    `${API_BASE}/api/workspaces/${workspaceId}/profile?connection_id=${encodeURIComponent(connectionId)}`,
-    { headers: { ...getAuthHeaders() } }
+  const response = await apiFetch(
+    `${API_BASE}/api/workspaces/${workspaceId}/profile?connection_id=${encodeURIComponent(connectionId)}`
   );
   if (!response.ok) return { status: 'none' };
   return response.json();
@@ -420,11 +441,11 @@ export async function updateProfileQuestions(
   }>,
   suggestedQuestions: string[] = [],
 ): Promise<{ status: string; questions_count: number }> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE}/api/workspaces/${workspaceId}/profile/questions`,
     {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         connection_id: connectionId,
         directional_plan: directionalPlan,
@@ -462,11 +483,11 @@ export async function updateProfile(
     }>;
   },
 ): Promise<{ status: string }> {
-  const response = await fetch(
+  const response = await apiFetch(
     `${API_BASE}/api/workspaces/${workspaceId}/profile`,
     {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         connection_id: connectionId,
         ...profile,
@@ -484,9 +505,9 @@ export async function deleteProfile(
   workspaceId: string,
   connectionId: string
 ): Promise<void> {
-  await fetch(
+  await apiFetch(
     `${API_BASE}/api/workspaces/${workspaceId}/profile?connection_id=${encodeURIComponent(connectionId)}`,
-    { method: 'DELETE', headers: { ...getAuthHeaders() } }
+    { method: 'DELETE' }
   );
 }
 
@@ -534,9 +555,7 @@ export interface ApiToolConfig {
 }
 
 export async function listApiTools(workspaceId: string): Promise<ApiToolConfig[]> {
-  const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/api-tools`, {
-    headers: { ...getAuthHeaders() },
-  });
+  const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/api-tools`);
   if (!response.ok) throw new Error('Failed to list API tools');
   return response.json();
 }
@@ -545,9 +564,9 @@ export async function addApiTool(
   workspaceId: string,
   tool: Partial<ApiToolConfig>
 ): Promise<ApiToolConfig> {
-  const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/api-tools`, {
+  const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/api-tools`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(tool),
   });
   if (!response.ok) {
@@ -562,9 +581,9 @@ export async function updateApiTool(
   toolId: string,
   tool: Partial<ApiToolConfig>
 ): Promise<ApiToolConfig> {
-  const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/api-tools/${toolId}`, {
+  const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/api-tools/${toolId}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(tool),
   });
   if (!response.ok) {
@@ -575,9 +594,8 @@ export async function updateApiTool(
 }
 
 export async function deleteApiTool(workspaceId: string, toolId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/api-tools/${toolId}`, {
+  const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/api-tools/${toolId}`, {
     method: 'DELETE',
-    headers: { ...getAuthHeaders() },
   });
   if (!response.ok) throw new Error('Failed to delete API tool');
 }
@@ -587,9 +605,9 @@ export async function testApiTool(
   toolId: string,
   testParams: Record<string, string>
 ): Promise<{ status: string; duration_ms: number; response: unknown }> {
-  const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/api-tools/${toolId}/test`, {
+  const response = await apiFetch(`${API_BASE}/api/workspaces/${workspaceId}/api-tools/${toolId}/test`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ test_params: testParams }),
   });
   if (!response.ok) {
@@ -620,9 +638,7 @@ export async function fetchCustomers(
   if (nameCol) params.set('name_col', nameCol);
   if (codeCol) params.set('code_col', codeCol);
 
-  const response = await fetch(`${API_BASE}/api/scope/customers?${params}`, {
-    headers: { ...getAuthHeaders() },
-  });
+  const response = await apiFetch(`${API_BASE}/api/scope/customers?${params}`);
   if (!response.ok) {
     const err = await response.json().catch(() => ({ detail: 'Failed' }));
     throw new Error(err.detail || 'Failed to fetch customers');
