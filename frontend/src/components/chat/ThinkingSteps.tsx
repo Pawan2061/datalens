@@ -167,7 +167,7 @@ export default function ThinkingSteps({ steps, isStreaming }: ThinkingStepsProps
             const hasSql = !!step.sql;
             const parsed = tryParse(step);
             const errorDetail = (parsed?.error_detail as string) || '';
-            const hasExpandable = hasReasoning || (isPrivileged && showTechnicalDetails && hasSql) || (isError && errorDetail);
+            const hasExpandable = hasReasoning || (isPrivileged && showTechnicalDetails && hasSql) || (isPrivileged && isError && !!errorDetail);
 
             return (
               <div key={i} className={`ts-step ${isReasoning(step) ? 'ts-step--reasoning' : ''}`}>
@@ -215,12 +215,12 @@ export default function ThinkingSteps({ steps, isStreaming }: ThinkingStepsProps
                               {(tryParse(step)?.content as string) || step.content}
                             </div>
                           )}
-                          {hasSql && (
+                          {isPrivileged && hasSql && (
                             <pre className="ts-sql-code">
                               {step.sql}
                             </pre>
                           )}
-                          {isError && errorDetail && (
+                          {isPrivileged && isError && errorDetail && (
                             <pre className="ts-sql-code ts-error-detail">
                               {errorDetail}
                             </pre>
