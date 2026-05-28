@@ -21,6 +21,7 @@ from app.agent.tools import (
     execute_sql,
     refresh_schema,
 )
+from app.agent.tools.sql_executor import _customer_scope_ctx
 from app.agent.tools.api_tool_factory import build_workspace_api_tools, describe_api_tools_for_prompt
 from app.llm.openai_llm import get_planner_llm, get_synthesis_llm
 
@@ -500,10 +501,13 @@ async def run_agent(
             f"\n\n━━ CUSTOMER SCOPE FILTER ━━\n"
             f"You are operating in CUSTOMER mode. The user is viewing as: {display_name}.\n"
             f"customer_id = {customer_scope}\n"
-            f"CRITICAL: Every SQL query MUST include a WHERE clause (or equivalent filter) "
-            f"that restricts results to this customer_id = {customer_scope}.\n"
-            f"If a table does not have a customer_id column, join it to the relevant table "
-            f"that does. NEVER return data for other customers.\n"
+            f"CRITICAL: Every SQL query that touches `invoice` or `customer_master` "
+            f"MUST include a WHERE clause (or CTE-level filter) restricting results to "
+            f"customer_id = '{customer_scope}'. This is enforced at the execution layer — "
+            f"queries missing the filter will be rejected and you will need to retry.\n"
+            f"Tables that do NOT carry customer_id (e.g. stock, item_master) do not need "
+            f"the filter — they represent shared inventory visible to all customers.\n"
+            f"NEVER return invoice or customer_master rows for any customer_id other than '{customer_scope}'.\n"
             f"FOR EXTERNAL API TOOLS: Any input parameter that names the customer "
             f"(customer_id, CUSTOMER_CODE, cust_id, etc.) is pre-filled with "
             f"'{customer_scope}'. Call the tool directly — DO NOT ask the user for "
@@ -622,6 +626,11 @@ async def run_agent(
             conversation.append((role, h.get("content", "")))
     conversation.append(("human", question))
 
+    # Pin the customer scope into the contextvar so execute_sql can enforce
+    # it as a hard guard independent of whatever SQL the LLM generates.
+    # The token ensures we restore the previous value even if this coroutine
+    # is nested (e.g. a refresh running inside another agent call).
+    _scope_token = _customer_scope_ctx.set(customer_scope or "")
     agent_loop_start = time.perf_counter()
     try:
      async for chunk in graph.astream(
@@ -873,6 +882,8 @@ async def run_agent(
         # Fall through to build partial results from whatever we collected
     else:
         timer.add("agent_loop", (time.perf_counter() - agent_loop_start) * 1000)
+    finally:
+        _customer_scope_ctx.reset(_scope_token)
 
     # ── Streaming synthesis (runs after the agent finishes all SQL) ──
     # analyze_results is no longer an agent tool — synthesis runs here so

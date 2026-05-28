@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
+import re
 import time
 
 from langchain_core.tools import tool
@@ -12,6 +14,25 @@ from app.utils.ttl_cache import TTLCache
 
 
 _sql_result_cache: TTLCache[dict] = TTLCache(ttl_seconds=15, max_size=128)
+
+# Set by graph.py before each agent run so the tool can enforce customer
+# scope without the LLM needing to receive it as an argument.
+_customer_scope_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "customer_scope", default=""
+)
+
+# Tables that carry customer-level data and MUST be filtered by customer_id
+# whenever a customer-scoped user is making a query.
+_CUSTOMER_SENSITIVE_TABLES = re.compile(
+    r"\b(invoice|customer_master)\b", re.IGNORECASE
+)
+# Matches customer_id filtered against a LITERAL value (string or number).
+# Must NOT match JOIN conditions like "b.customer_id = cm.customer_id" —
+# those have another identifier after =, not a quote or digit.
+_CUSTOMER_ID_FILTER = re.compile(
+    r"\bcustomer_id\s*(?:=\s*(?:['\"]|\d)|IN\s*\()",
+    re.IGNORECASE,
+)
 _NONDETERMINISTIC_SQL_MARKERS = (
     "CURRENT_TIMESTAMP",
     "CURRENT_DATE",
@@ -52,6 +73,31 @@ async def execute_sql(sql: str, connection_id: str) -> str:
         logging.getLogger("guardrails.sql").warning(
             "FLAGGED SQL: %s | reason=%s", sql[:200], validator_result.reason,
         )
+
+    # ── Customer scope guard (hard enforcement) ───────────────────
+    # The LLM is instructed via the system prompt to always filter by
+    # customer_id for scoped users. This is the code-level backstop: if
+    # the generated SQL touches customer-sensitive tables but omits the
+    # filter, the query is blocked and the LLM is told to retry with it.
+    scope = _customer_scope_ctx.get()
+    if scope:
+        touches_sensitive = bool(_CUSTOMER_SENSITIVE_TABLES.search(sql))
+        has_filter = bool(_CUSTOMER_ID_FILTER.search(sql))
+        if touches_sensitive and not has_filter:
+            import logging
+            logging.getLogger("guardrails.scope").warning(
+                "SCOPE VIOLATION blocked | scope=%s | sql=%s", scope, sql[:300],
+            )
+            return json.dumps({
+                "error": (
+                    f"Scope violation: this query accesses customer data tables "
+                    f"(invoice / customer_master) without filtering by customer_id. "
+                    f"You MUST add 'WHERE customer_id = ''{scope}''' "
+                    f"(or an equivalent CTE/subquery filter) and retry."
+                ),
+                "data": [], "columns": [], "row_count": 0, "duration_ms": 0,
+                "scope_blocked": True,
+            })
 
     if conn_type is None:
         return json.dumps({

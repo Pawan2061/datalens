@@ -271,7 +271,7 @@ export default function WorkspaceView() {
       if (!userContent || !connId) continue;
 
       try {
-        const result = await refreshQuery(userContent, connId, mode);
+        const result = await refreshQuery(userContent, connId, mode, customerScope, customerScopeName);
 
         const tempId = `__refresh_${msgId}`;
         const store = useCanvasStore.getState();

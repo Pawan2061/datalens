@@ -131,7 +131,9 @@ export async function sendDataEmail(
 export function refreshQuery(
   question: string,
   connectionId: string,
-  mode: 'quick' | 'deep' = 'quick'
+  mode: 'quick' | 'deep' = 'quick',
+  customerScope: string = '',
+  customerScopeName: string = '',
 ): Promise<import('../types/chat').InsightResult> {
   return new Promise(async (resolve, reject) => {
     const tempSessionId = `__refresh_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -183,7 +185,7 @@ export function refreshQuery(
         }
       };
 
-      await sendMessage(tempSessionId, question, connectionId, mode);
+      await sendMessage(tempSessionId, question, connectionId, mode, '', [], customerScope, customerScopeName);
     } catch (err) {
       requestFailed = true;
       es.close();
