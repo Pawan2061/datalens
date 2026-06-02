@@ -1868,6 +1868,46 @@ body {
 }
 
 /* ============================================================
+   Readable mode (.dl-readable)
+   Applied on the WorkspaceView root for moderators and regular
+   users (non-privileged). A larger, calmer chat layout that's
+   easier to read — wider sidebar, bigger input box, larger text.
+   Admin / manager keep the standard compact layout.
+   ============================================================ */
+
+/* Wider chat-history sidebar (expanded only; collapse still = 48px) */
+.dl-readable .wv-sidebar--expanded { width: 280px; }
+.dl-readable .wv-sb-item { font-size: 14px; }
+.dl-readable .wv-sb-item-text { padding: 10px 12px; }
+
+/* Bigger, easier-to-use input box */
+.dl-readable .chat-input-wrapper { max-width: 760px; }
+.dl-readable .chat-input-box { border-radius: 18px; }
+.dl-readable .chat-textarea {
+  font-size: 16px;
+  line-height: 1.7;
+  padding: 14px 62px 16px 18px;
+  min-height: 54px;
+}
+.dl-readable .chat-send-btn { width: 38px; height: 38px; }
+.dl-readable .chat-suggestion-chip { font-size: 14px; padding: 12px 16px; }
+
+/* More readable answers */
+.dl-readable .chat-streaming-narrative {
+  font-size: 15.5px;
+  line-height: 1.8;
+  padding: 18px 20px;
+}
+.dl-readable .chat-streaming-narrative h2 { font-size: 17px; }
+.dl-readable .chat-bubble-user { max-width: 560px; padding: 14px 20px; }
+.dl-readable .chat-bubble-user p { font-size: 15px; line-height: 1.65; }
+
+/* Slightly larger result tables for readability */
+.dl-readable .dt-table { font-size: 14px; }
+.dl-readable .dt-cell { padding: 12px 16px; }
+.dl-readable .dt-th { font-size: 12px; padding: 12px 16px; }
+
+/* ============================================================
    Thinking Steps (ts-*)
    ============================================================ */
 .ts-container {

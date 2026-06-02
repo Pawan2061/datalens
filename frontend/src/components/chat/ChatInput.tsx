@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ArrowUp, Zap, Brain, Play, X, Sparkles } from 'lucide-react';
+import { ArrowUp, Zap, Play, X, Sparkles } from 'lucide-react';
 
 interface ChatInputProps {
   onSend: (message: string, mode: 'quick' | 'deep') => void;
@@ -220,6 +220,7 @@ export default function ChatInput({ onSend, isLoading, disabled, placeholder, sh
               <Zap size={12} />
               Quick Insight
             </button>
+            {/* Deep Analysis mode disabled — hidden from all roles.
             <button
               onClick={() => setAnalysisMode('deep')}
               className={`chat-mode-btn ${analysisMode === 'deep' ? 'chat-mode-btn--active-deep' : ''}`}
@@ -227,6 +228,7 @@ export default function ChatInput({ onSend, isLoading, disabled, placeholder, sh
               <Brain size={12} />
               Deep Analysis
             </button>
+            */}
           </div>
 
           {analysisMode === 'quick' && (

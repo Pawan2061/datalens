@@ -69,6 +69,9 @@ export default function WorkspaceView() {
   const authUser = useAuthStore((s) => s.user);
   const canSelectScope = useAuthStore((s) => s.canSelectScope);
   const isModerator = useAuthStore((s) => s.isModerator);
+  // Moderators and regular users (non-privileged) get a larger, more
+  // readable chat layout — wider sidebar, bigger input, larger text.
+  const isPrivileged = useAuthStore((s) => s.isPrivileged);
   const lockedCustomerCode = !canSelectScope ? authUser?.customer_code || "" : "";
 
   const [customerScope, setCustomerScope] = useState(lockedCustomerCode);
@@ -408,7 +411,10 @@ export default function WorkspaceView() {
   const canvasTitle = activeSession?.title || undefined;
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "row" }}>
+    <div
+      className={isPrivileged ? undefined : "dl-readable"}
+      style={{ height: "100%", display: "flex", flexDirection: "row" }}
+    >
       <AppSidebar activePage="workspace" />
 
       <div
