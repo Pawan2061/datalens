@@ -9,8 +9,6 @@ import AnalyticsDashboard from './pages/AnalyticsDashboard';
 import { useAuthStore } from './store/authStore';
 import { useWorkspaceStore } from './store/workspaceStore';
 
-const DEFAULT_WORKSPACE_ID = 'ws-b0209146';
-
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
   static getDerivedStateFromError(error: Error) { return { error }; }
@@ -95,6 +93,7 @@ function ProtectedRoute({ children, adminOnly = false, privilegedOnly = false }:
 
 function HomeRoute() {
   const user = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const loadWorkspacesFromBackend = useWorkspaceStore((s) => s.loadWorkspacesFromBackend);
   const [loading, setLoading] = useState(true);
@@ -105,8 +104,36 @@ function HomeRoute() {
 
   if (user?.role === 'admin' || user?.role === 'manager') return <Navigate to="/admin" replace />;
   if (loading) return null;
-  const first = workspaces[0]?.id || DEFAULT_WORKSPACE_ID;
-  return <Navigate to={`/workspace/${first}`} replace />;
+  const first = workspaces[0]?.id;
+  // Only redirect to a workspace that actually exists for this user. Sending
+  // them to a hardcoded default they can't access bounces back here → blank page.
+  if (first) return <Navigate to={`/workspace/${first}`} replace />;
+  return <NoWorkspaces onSignOut={logout} />;
+}
+
+function NoWorkspaces({ onSignOut }: { onSignOut: () => void }) {
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      flexDirection: 'column', gap: 16, background: 'linear-gradient(135deg, #0f0a1e 0%, #1a1136 100%)',
+      fontFamily: "'Inter', system-ui, sans-serif", textAlign: 'center', padding: 24,
+    }}>
+      <div style={{ fontSize: 40 }}>📊</div>
+      <h2 style={{ color: '#fff', fontSize: 20, fontWeight: 700, margin: 0 }}>No workspaces yet</h2>
+      <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 14, maxWidth: 360, margin: 0, lineHeight: 1.5 }}>
+        You don't have access to any workspace yet. Ask an administrator to add you to one.
+      </p>
+      <button
+        onClick={onSignOut}
+        style={{
+          marginTop: 8, padding: '10px 24px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.15)',
+          background: 'rgba(255,255,255,0.08)', color: '#fff', cursor: 'pointer', fontSize: 14, fontWeight: 500,
+        }}
+      >
+        Sign out
+      </button>
+    </div>
+  );
 }
 
 function isJwtExpired(token: string): boolean {

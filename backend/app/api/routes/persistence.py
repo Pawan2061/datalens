@@ -91,8 +91,9 @@ async def list_workspaces(current_user: dict = Depends(get_current_user)):
     email = current_user.get("email", "")
     container = insight_db.container("workspaces")
 
-    if role == "admin":
-        # Admin sees everything
+    if role in ("admin", "moderator"):
+        # Admin and moderator see everything (moderator is a read-only,
+        # admin-like data viewer who browses across customers via the dropdown).
         query = "SELECT * FROM c ORDER BY c.last_active_at DESC"
         results = list(container.query_items(query=query, enable_cross_partition_query=True))
     elif role == "manager":

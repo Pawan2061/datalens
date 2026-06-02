@@ -68,6 +68,7 @@ export default function WorkspaceView() {
   // the dropdown for cross-customer browsing.
   const authUser = useAuthStore((s) => s.user);
   const canSelectScope = useAuthStore((s) => s.canSelectScope);
+  const isModerator = useAuthStore((s) => s.isModerator);
   const lockedCustomerCode = !canSelectScope ? authUser?.customer_code || "" : "";
 
   const [customerScope, setCustomerScope] = useState(lockedCustomerCode);
@@ -94,9 +95,12 @@ export default function WorkspaceView() {
     if (workspaceId) setActiveWorkspace(workspaceId);
   }, [workspaceId, setActiveWorkspace]);
 
+  // Only bounce to home once the backend list has actually loaded — otherwise
+  // we redirect before workspaces arrive and ping-pong with HomeRoute (blank page).
+  const backendSynced = useWorkspaceStore((s) => s._backendSynced);
   useEffect(() => {
-    if (!workspace) navigate("/");
-  }, [workspace, navigate]);
+    if (backendSynced && !workspace) navigate("/");
+  }, [backendSynced, workspace, navigate]);
 
   // Bootstrap: if workspace has a connection but no scope customers yet, fetch once
   useEffect(() => {
@@ -444,7 +448,9 @@ export default function WorkspaceView() {
             onClearAllSessions={handleClearAllSessions}
           />
 
-          {lockedCustomerCode ? (
+          {(lockedCustomerCode || isModerator) ? (
+            // Chat-only layout (no canvas) for scoped users and moderators.
+            // Moderators still get the "Viewing as" dropdown; scoped users don't.
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
               <ChatPanel
                 session={activeSession}
@@ -453,7 +459,7 @@ export default function WorkspaceView() {
                 scopeCustomers={workspace?.scopeCustomers || []}
                 customerScope={customerScope}
                 customerScopeName={customerScopeName}
-                onScopeChange={undefined}
+                onScopeChange={isModerator ? handleScopeChange : undefined}
                 onSend={handleSend}
                 onFollowUp={handleFollowUp}
                 onPushToCanvas={handlePushToCanvas}
