@@ -7,7 +7,7 @@ export interface User {
   email: string;
   name: string;
   avatar_url: string | null;
-  role: 'user' | 'manager' | 'admin';
+  role: 'user' | 'moderator' | 'manager' | 'admin';
   status: 'pending' | 'active' | 'suspended' | 'expired';
   customer_code: string;  // "" = unscoped (admin/legacy); non-empty = bound
   max_questions_per_day: number;
@@ -29,7 +29,11 @@ interface AuthState {
   isAuthenticated: boolean;
   isAdmin: boolean;
   isManager: boolean;
-  isPrivileged: boolean;  // admin or manager
+  isModerator: boolean;
+  isPrivileged: boolean;  // admin or manager — drives SQL/technical visibility (moderator excluded)
+  canSelectScope: boolean;     // may use the "Viewing as" customer dropdown
+  canManageProfile: boolean;   // may generate/view the data intelligence profile
+  canAccessDashboard: boolean; // may open the admin dashboard (moderator = view-only)
   isPending: boolean;
   isCustomerScoped: boolean;  // non-admin bound to a customer_code
   login: (email: string, password: string, recaptchaToken: string) => Promise<void>;
@@ -40,12 +44,20 @@ interface AuthState {
 function deriveFlags(user: User | null) {
   const isAdmin = user?.role === 'admin';
   const isManager = user?.role === 'manager';
+  const isModerator = user?.role === 'moderator';
+  const isPrivileged = isAdmin || isManager;
   return {
     isAdmin,
     isManager,
-    isPrivileged: isAdmin || isManager,
+    isModerator,
+    isPrivileged,
+    // Moderator gets admin-like reach for these three, but NOT the
+    // SQL/technical visibility that isPrivileged grants in the chat.
+    canSelectScope: isPrivileged || isModerator,
+    canManageProfile: isPrivileged || isModerator,
+    canAccessDashboard: isPrivileged || isModerator,
     isPending: user?.status === 'pending',
-    isCustomerScoped: !isAdmin && !isManager && !!user?.customer_code,
+    isCustomerScoped: !isAdmin && !isManager && !isModerator && !!user?.customer_code,
   };
 }
 
@@ -83,7 +95,11 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       isAdmin: false,
       isManager: false,
+      isModerator: false,
       isPrivileged: false,
+      canSelectScope: false,
+      canManageProfile: false,
+      canAccessDashboard: false,
       isPending: false,
       isCustomerScoped: false,
 

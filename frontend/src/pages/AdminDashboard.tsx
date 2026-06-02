@@ -216,7 +216,7 @@ function CreateUserModal({ onClose, onCreated, headers, scopeCustomers }: {
   const [password, setPassword] = useState('');
   const [customerCode, setCustomerCode] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
-  const [role, setRole] = useState<'user' | 'manager' | 'admin'>('user');
+  const [role, setRole] = useState<'user' | 'moderator' | 'manager' | 'admin'>('user');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -299,8 +299,9 @@ function CreateUserModal({ onClose, onCreated, headers, scopeCustomers }: {
             )}
           </label>
           <label className="adm-modal-label">Role
-            <select className="adm-modal-input" value={role} onChange={(e) => setRole(e.target.value as 'user' | 'manager' | 'admin')}>
+            <select className="adm-modal-input" value={role} onChange={(e) => setRole(e.target.value as 'user' | 'moderator' | 'manager' | 'admin')}>
               <option value="user">User (locked to customer)</option>
+              <option value="moderator">Moderator</option>
               <option value="manager">Manager</option>
               <option value="admin">Admin</option>
             </select>
@@ -405,12 +406,13 @@ function DashboardSection({ stats, workspaces, loading, onOpenWorkspace }: {
 /* ================================================================
    SECTION: Workspaces (full management)
    ================================================================ */
-function WorkspacesSection({ workspaces, loading, onOpenWorkspace, onDeleteWorkspace, headers, onRefresh }: {
+function WorkspacesSection({ workspaces, loading, onOpenWorkspace, onDeleteWorkspace, headers, onRefresh, readOnly = false }: {
   workspaces: AdminWorkspace[]; loading: boolean;
   onOpenWorkspace: (id: string) => void;
   onDeleteWorkspace: (id: string, name: string) => void;
   headers: Record<string, string>;
   onRefresh: () => void;
+  readOnly?: boolean;
 }) {
   const navigate = useNavigate();
   const wsStore = useWorkspaceStore();
@@ -553,9 +555,11 @@ function WorkspacesSection({ workspaces, loading, onOpenWorkspace, onDeleteWorks
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: 13, color: '#9ca3af' }}>{filtered.length} workspace{filtered.length !== 1 ? 's' : ''}</span>
-          <button className="adm-btn adm-btn--primary" style={{ fontSize: 13, padding: '7px 16px' }} onClick={() => setShowCreateDialog(true)}>
-            <Plus size={14} /> New Workspace
-          </button>
+          {!readOnly && (
+            <button className="adm-btn adm-btn--primary" style={{ fontSize: 13, padding: '7px 16px' }} onClick={() => setShowCreateDialog(true)}>
+              <Plus size={14} /> New Workspace
+            </button>
+          )}
         </div>
       </div>
 
@@ -683,20 +687,24 @@ function WorkspacesSection({ workspaces, loading, onOpenWorkspace, onDeleteWorks
                         <span><Activity size={12} /> Last Active: {ws.last_active_at ? new Date(ws.last_active_at).toLocaleDateString() : '--'}</span>
                       </div>
                       <div style={{ display: 'flex', gap: 8 }}>
-                        <button
-                          className="adm-btn"
-                          style={{ fontSize: 12, padding: '6px 14px', color: '#6366f1', borderColor: '#e0e7ff' }}
-                          onClick={(e) => { e.stopPropagation(); setApiToolsWsId(ws.id); }}
-                        >
-                          <Plug size={13} /> API Tools
-                        </button>
-                        <button
-                          className="adm-btn adm-btn--danger"
-                          style={{ fontSize: 12, padding: '6px 14px' }}
-                          onClick={(e) => { e.stopPropagation(); onDeleteWorkspace(ws.id, ws.name); }}
-                        >
-                          <Trash2 size={13} /> Delete
-                        </button>
+                        {!readOnly && (
+                          <button
+                            className="adm-btn"
+                            style={{ fontSize: 12, padding: '6px 14px', color: '#6366f1', borderColor: '#e0e7ff' }}
+                            onClick={(e) => { e.stopPropagation(); setApiToolsWsId(ws.id); }}
+                          >
+                            <Plug size={13} /> API Tools
+                          </button>
+                        )}
+                        {!readOnly && (
+                          <button
+                            className="adm-btn adm-btn--danger"
+                            style={{ fontSize: 12, padding: '6px 14px' }}
+                            onClick={(e) => { e.stopPropagation(); onDeleteWorkspace(ws.id, ws.name); }}
+                          >
+                            <Trash2 size={13} /> Delete
+                          </button>
+                        )}
                         <button className="adm-btn adm-btn--primary" style={{ fontSize: 12, padding: '6px 16px' }} onClick={(e) => { e.stopPropagation(); onOpenWorkspace(ws.id); }}>
                           Open Workspace <ChevronRight size={14} />
                         </button>
@@ -791,11 +799,12 @@ function ManagersSection({ workspaces, users, loading }: {
 /* ================================================================
    SECTION: Users
    ================================================================ */
-function UsersSection({ users, loading, onAction, headers, scopeCustomers }: {
+function UsersSection({ users, loading, onAction, headers, scopeCustomers, readOnly = false }: {
   users: User[]; loading: boolean;
   onAction: (action: string, userId: string, payload?: Record<string, unknown>) => Promise<void>;
   headers: () => Record<string, string>;
   scopeCustomers?: { id: string; code: string; name: string }[];
+  readOnly?: boolean;
 }) {
   const [filter, setFilter] = useState<UserFilter>('all');
   const [limitsUser, setLimitsUser] = useState<User | null>(null);
@@ -840,9 +849,11 @@ function UsersSection({ users, loading, onAction, headers, scopeCustomers }: {
             </button>
           ))}
         </div>
-        <button className="adm-btn adm-btn--primary" onClick={() => setShowCreate(true)}>
-          <UserPlus size={14} /> Create User
-        </button>
+        {!readOnly && (
+          <button className="adm-btn adm-btn--primary" onClick={() => setShowCreate(true)}>
+            <UserPlus size={14} /> Create User
+          </button>
+        )}
       </div>
 
       <div className="adm-table-wrapper">
@@ -873,11 +884,16 @@ function UsersSection({ users, loading, onAction, headers, scopeCustomers }: {
                   </div>
                 </td>
                 <td>
-                  <select className="adm-role-select" value={u.role} onChange={(e) => handleRoleChange(u.id, e.target.value)}>
-                    <option value="user">User</option>
-                    <option value="manager">Manager</option>
-                    <option value="admin">Admin</option>
-                  </select>
+                  {readOnly ? (
+                    <span style={{ textTransform: 'capitalize' }}>{u.role}</span>
+                  ) : (
+                    <select className="adm-role-select" value={u.role} onChange={(e) => handleRoleChange(u.id, e.target.value)}>
+                      <option value="user">User</option>
+                      <option value="moderator">Moderator</option>
+                      <option value="manager">Manager</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  )}
                 </td>
                 <td><span style={{ fontFamily: 'monospace', fontSize: 12 }}>{u.customer_code || '—'}</span></td>
                 <td><StatusBadge status={u.status} /></td>
@@ -887,7 +903,9 @@ function UsersSection({ users, loading, onAction, headers, scopeCustomers }: {
                 <td>{u.expiry_date || '--'}</td>
                 <td>
                   <div className="adm-actions">
-                    {actionLoading === u.id ? (
+                    {readOnly ? (
+                      <span style={{ fontSize: 12, color: 'var(--adm-text-dim, #888)' }}>—</span>
+                    ) : actionLoading === u.id ? (
                       <Loader2 size={14} className="ts-spinner" />
                     ) : deleteConfirm === u.id ? (
                       <div className="adm-confirm">
@@ -999,10 +1017,15 @@ export default function AdminDashboard() {
 
   const role = user?.role || 'user';
   const isAdmin = role === 'admin';
+  const isModerator = role === 'moderator';
   const isPrivileged = role === 'admin' || role === 'manager';
+  // Moderator may VIEW the same data as an admin (stats/users/workspaces) but
+  // never mutate it and never see usage logs.
+  const canViewAdminData = isAdmin || isModerator;
 
-  // Non-admins default to workspaces view
-  const [section, setSection] = useState<Section>(isAdmin ? 'dashboard' : 'workspaces');
+  // Moderators land on the dashboard overview (like admins); managers default
+  // to workspaces.
+  const [section, setSection] = useState<Section>(canViewAdminData ? 'dashboard' : 'workspaces');
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [workspaces, setWorkspaces] = useState<AdminWorkspace[]>([]);
@@ -1017,18 +1040,18 @@ export default function AdminDashboard() {
   const [deleting, setDeleting] = useState(false);
 
   const fetchStats = useCallback(async () => {
-    if (!isAdmin) { setStatsLoading(false); return; }
+    if (!canViewAdminData) { setStatsLoading(false); return; }
     setStatsLoading(true);
     try { const r = await fetch(`${API_BASE}/api/admin/stats`, { headers: headers() }); if (r.ok) setStats(await r.json()); } catch {}
     setStatsLoading(false);
-  }, [headers, isAdmin]);
+  }, [headers, canViewAdminData]);
 
   const fetchUsers = useCallback(async () => {
-    if (!isAdmin) { setUsersLoading(false); return; }
+    if (!canViewAdminData) { setUsersLoading(false); return; }
     setUsersLoading(true);
     try { const r = await fetch(`${API_BASE}/api/admin/users`, { headers: headers() }); if (r.ok) setUsers(await r.json()); } catch {}
     setUsersLoading(false);
-  }, [headers, isAdmin]);
+  }, [headers, canViewAdminData]);
 
   const fetchWorkspaces = useCallback(async () => {
     // Skip if no auth token available yet (zustand hydration pending)
@@ -1036,12 +1059,12 @@ export default function AdminDashboard() {
     if (!h['Authorization']) { return; }
     setWsLoading(true);
     try {
-      // Admins get enriched workspace data, others get regular workspace list
-      const url = isAdmin ? `${API_BASE}/api/admin/workspaces` : `${API_BASE}/api/workspaces`;
+      // Admins & moderators get enriched workspace data, others get regular list
+      const url = canViewAdminData ? `${API_BASE}/api/admin/workspaces` : `${API_BASE}/api/workspaces`;
       const r = await fetch(url, { headers: h });
       if (r.ok) {
         const data = await r.json();
-        if (isAdmin) {
+        if (canViewAdminData) {
           setWorkspaces(data);
         } else {
           // Map regular workspace format to AdminWorkspace shape
@@ -1058,7 +1081,7 @@ export default function AdminDashboard() {
       }
     } catch {}
     setWsLoading(false);
-  }, [headers, isAdmin]);
+  }, [headers, canViewAdminData]);
 
   const fetchUsage = useCallback(async () => {
     if (!isAdmin) { setUsageLoading(false); return; }
@@ -1067,7 +1090,7 @@ export default function AdminDashboard() {
     setUsageLoading(false);
   }, [headers, isAdmin]);
 
-  useEffect(() => { fetchWorkspaces(); if (isAdmin) { fetchStats(); fetchUsers(); } }, [fetchStats, fetchWorkspaces, fetchUsers, isAdmin]);
+  useEffect(() => { fetchWorkspaces(); if (canViewAdminData) { fetchStats(); fetchUsers(); } }, [fetchStats, fetchWorkspaces, fetchUsers, canViewAdminData]);
   useEffect(() => { if (section === 'usage') fetchUsage(); }, [section, fetchUsage]);
 
   const refreshAll = () => { fetchStats(); fetchWorkspaces(); fetchUsers(); if (section === 'usage') fetchUsage(); };
@@ -1146,7 +1169,7 @@ export default function AdminDashboard() {
         </div>
 
         <nav className="adm-nav">
-          {isAdmin && (
+          {canViewAdminData && (
             <>
               <div className="adm-nav-group-label">Overview</div>
               <button className={`adm-nav-item ${section === 'dashboard' ? 'adm-nav-item--active' : ''}`} onClick={() => { setSection('dashboard'); setMobileMenuOpen(false); }}>
@@ -1159,7 +1182,7 @@ export default function AdminDashboard() {
           <button className={`adm-nav-item ${section === 'workspaces' ? 'adm-nav-item--active' : ''}`} onClick={() => { setSection('workspaces'); setMobileMenuOpen(false); }}>
             <Building2 size={18} /> Workspaces
           </button>
-          {isAdmin && (
+          {canViewAdminData && (
             <>
               <button className={`adm-nav-item ${section === 'managers' ? 'adm-nav-item--active' : ''}`} onClick={() => { setSection('managers'); setMobileMenuOpen(false); }}>
                 <UserCog size={18} /> Managers
@@ -1170,7 +1193,7 @@ export default function AdminDashboard() {
             </>
           )}
 
-          {isPrivileged && (
+          {(isPrivileged || isModerator) && (
             <>
               <div className="adm-nav-group-label">Reports</div>
               <button className="adm-nav-item" onClick={() => navigate('/analytics')}>
@@ -1178,9 +1201,12 @@ export default function AdminDashboard() {
               </button>
             </>
           )}
-          <button className={`adm-nav-item ${section === 'usage' ? 'adm-nav-item--active' : ''}`} onClick={() => { setSection('usage'); setMobileMenuOpen(false); }}>
-            <ScrollText size={18} /> Usage Logs
-          </button>
+          {/* Usage Logs are admin/manager only — hidden from moderators. */}
+          {!isModerator && (
+            <button className={`adm-nav-item ${section === 'usage' ? 'adm-nav-item--active' : ''}`} onClick={() => { setSection('usage'); setMobileMenuOpen(false); }}>
+              <ScrollText size={18} /> Usage Logs
+            </button>
+          )}
         </nav>
 
         <div className="adm-sidebar-footer">
@@ -1231,10 +1257,10 @@ export default function AdminDashboard() {
 
         <div className="adm-content">
           {section === 'dashboard' && <DashboardSection stats={stats} workspaces={workspaces} loading={statsLoading && wsLoading} onOpenWorkspace={openWorkspace} />}
-          {section === 'workspaces' && <WorkspacesSection workspaces={workspaces} loading={wsLoading} onOpenWorkspace={openWorkspace} onDeleteWorkspace={deleteWorkspace} headers={headers()} onRefresh={refreshAll} />}
+          {section === 'workspaces' && <WorkspacesSection workspaces={workspaces} loading={wsLoading} onOpenWorkspace={openWorkspace} onDeleteWorkspace={deleteWorkspace} headers={headers()} onRefresh={refreshAll} readOnly={isModerator} />}
           {section === 'managers' && <ManagersSection workspaces={workspaces} users={users} loading={usersLoading && wsLoading} />}
-          {section === 'users' && <UsersSection users={users} loading={usersLoading} onAction={handleUserAction} headers={headers} scopeCustomers={allScopeCustomers} />}
-          {section === 'usage' && <UsageSection usage={usage} loading={usageLoading} />}
+          {section === 'users' && <UsersSection users={users} loading={usersLoading} onAction={handleUserAction} headers={headers} scopeCustomers={allScopeCustomers} readOnly={isModerator} />}
+          {section === 'usage' && !isModerator && <UsageSection usage={usage} loading={usageLoading} />}
         </div>
       </main>
 

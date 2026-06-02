@@ -163,9 +163,29 @@ async def get_admin_user(
 async def get_manager_or_admin(
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    """Dependency: require manager or admin role."""
-    if current_user.get("role") not in ("admin", "manager"):
+    """Dependency: require manager, admin, or moderator role.
+
+    Moderator is a read-only dashboard/analytics viewer (see
+    ``get_admin_or_moderator``); it is included here so moderators can load the
+    analytics dashboard alongside managers and admins.
+    """
+    if current_user.get("role") not in ("admin", "manager", "moderator"):
         raise HTTPException(status_code=403, detail="Manager or admin access required")
+    return current_user
+
+
+async def get_admin_or_moderator(
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Dependency: require admin or moderator role.
+
+    Moderators are read-only: they may VIEW admin dashboard data (stats, users,
+    workspaces) but every mutating endpoint (create/update/delete user, delete
+    workspace) and the usage-logs endpoint stays gated by ``get_admin_user``.
+    Managers are intentionally excluded so their existing access is unchanged.
+    """
+    if current_user.get("role") not in ("admin", "moderator"):
+        raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
 

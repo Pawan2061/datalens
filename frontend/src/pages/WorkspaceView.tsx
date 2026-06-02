@@ -67,8 +67,8 @@ export default function WorkspaceView() {
   // never see the dropdown. Admins/managers (and legacy unscoped users) keep
   // the dropdown for cross-customer browsing.
   const authUser = useAuthStore((s) => s.user);
-  const isPrivileged = useAuthStore((s) => s.isPrivileged);
-  const lockedCustomerCode = !isPrivileged ? authUser?.customer_code || "" : "";
+  const canSelectScope = useAuthStore((s) => s.canSelectScope);
+  const lockedCustomerCode = !canSelectScope ? authUser?.customer_code || "" : "";
 
   const [customerScope, setCustomerScope] = useState(lockedCustomerCode);
   const [customerScopeName, setCustomerScopeName] = useState(lockedCustomerCode);

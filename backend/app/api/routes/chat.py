@@ -57,7 +57,7 @@ async def chat(
     # Empty customer_code (legacy users) keeps current behavior.
     role = current_user.get("role", "user")
     bound_code = (current_user.get("customer_code") or "").strip()
-    if role not in ("admin", "manager") and bound_code:
+    if role not in ("admin", "manager", "moderator") and bound_code:
         request.customer_scope = bound_code
         # We don't have the resolved display name here without a workspace lookup;
         # pass the code itself if no name was supplied by the client.

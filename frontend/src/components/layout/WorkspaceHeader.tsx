@@ -1,4 +1,5 @@
-import { Database, FileText } from 'lucide-react';
+import { Database, FileText, LayoutDashboard } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { Workspace } from '../../types/workspace';
 import type { ConnectionInfo } from '../../types/connection';
 import ProfileStatus from '../workspace/ProfileStatus';
@@ -17,7 +18,9 @@ export default function WorkspaceHeader({
   onOpenConnectionDialog,
   customerName,
 }: WorkspaceHeaderProps) {
-  const isPrivileged = useAuthStore((s) => s.isPrivileged);
+  const canManageProfile = useAuthStore((s) => s.canManageProfile);
+  const canAccessDashboard = useAuthStore((s) => s.canAccessDashboard);
+  const navigate = useNavigate();
 
   return (
     <header className="wv-header">
@@ -42,12 +45,22 @@ export default function WorkspaceHeader({
             workspaceId={workspace.id}
             connectionId={activeConnection.id}
             connectionName={activeConnection.name || activeConnection.database}
-            readOnly={!isPrivileged}
+            readOnly={!canManageProfile}
           />
         )}
       </div>
 
       <div className="wv-header-right">
+        {canAccessDashboard && (
+          <button
+            onClick={() => navigate('/admin')}
+            className="wv-conn-badge"
+            title="Open dashboard"
+          >
+            <LayoutDashboard size={14} />
+            <span>Dashboard</span>
+          </button>
+        )}
         <button
           onClick={onOpenConnectionDialog}
           className={`wv-conn-badge ${activeConnection ? 'wv-conn-badge--active' : ''}`}

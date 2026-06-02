@@ -84,8 +84,9 @@ function ProtectedRoute({ children, adminOnly = false, privilegedOnly = false }:
     return <Navigate to="/" replace />;
   }
 
-  // Privileged routes (admin or manager)
-  if (privilegedOnly && user?.role !== 'admin' && user?.role !== 'manager') {
+  // Privileged routes (admin or manager). Moderator is allowed too — the
+  // dashboard renders read-only for them and hides the Usage Logs tab.
+  if (privilegedOnly && user?.role !== 'admin' && user?.role !== 'manager' && user?.role !== 'moderator') {
     return <Navigate to="/" replace />;
   }
 

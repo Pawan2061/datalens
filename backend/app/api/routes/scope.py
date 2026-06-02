@@ -50,7 +50,7 @@ async def list_customers(
     # Admins/managers see everything (their dropdown is the source of truth).
     role = current_user.get("role", "user")
     bound_code = (current_user.get("customer_code") or "").strip()
-    if role not in ("admin", "manager") and bound_code:
+    if role not in ("admin", "manager", "moderator") and bound_code:
         customers = [c for c in customers if str(c.get("code", "")).strip() == bound_code]
 
     return {"customers": customers}

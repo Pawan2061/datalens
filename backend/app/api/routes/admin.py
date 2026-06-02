@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.routes.users import get_admin_user
+from app.api.routes.users import get_admin_user, get_admin_or_moderator
 from app.auth.password import hash_password
 from app.db.insight_db import insight_db
 from app.schemas.persistence import AdminUserCreate, AdminUserUpdate
@@ -85,7 +85,7 @@ async def create_user(body: AdminUserCreate, admin: dict = Depends(get_admin_use
 @router.get("/api/admin/users/by-customer/{customer_code}")
 async def list_users_for_customer(
     customer_code: str,
-    admin: dict = Depends(get_admin_user),
+    admin: dict = Depends(get_admin_or_moderator),
 ):
     if not insight_db.is_ready:
         raise HTTPException(status_code=503, detail="Persistence not configured")
@@ -95,7 +95,7 @@ async def list_users_for_customer(
 # ── List all users ───────────────────────────────────────────────────
 
 @router.get("/api/admin/users")
-async def list_users(admin: dict = Depends(get_admin_user)):
+async def list_users(admin: dict = Depends(get_admin_or_moderator)):
     if not insight_db.is_ready:
         raise HTTPException(status_code=503, detail="Persistence not configured")
 
@@ -110,7 +110,7 @@ async def list_users(admin: dict = Depends(get_admin_user)):
 # ── Get single user ─────────────────────────────────────────────────
 
 @router.get("/api/admin/users/{user_id}")
-async def get_user(user_id: str, admin: dict = Depends(get_admin_user)):
+async def get_user(user_id: str, admin: dict = Depends(get_admin_or_moderator)):
     if not insight_db.is_ready:
         raise HTTPException(status_code=503, detail="Persistence not configured")
 
@@ -192,7 +192,7 @@ async def delete_user(user_id: str, admin: dict = Depends(get_admin_user)):
 # ── Dashboard stats ──────────────────────────────────────────────────
 
 @router.get("/api/admin/stats")
-async def admin_stats(admin: dict = Depends(get_admin_user)):
+async def admin_stats(admin: dict = Depends(get_admin_or_moderator)):
     if not insight_db.is_ready:
         raise HTTPException(status_code=503, detail="Persistence not configured")
 
@@ -312,7 +312,7 @@ async def admin_usage(
 # ── Workspaces (enriched with owner + member details) ────────────────
 
 @router.get("/api/admin/workspaces")
-async def admin_workspaces(admin: dict = Depends(get_admin_user)):
+async def admin_workspaces(admin: dict = Depends(get_admin_or_moderator)):
     """Return all workspaces enriched with owner info, member details, and metrics."""
     if not insight_db.is_ready:
         raise HTTPException(status_code=503, detail="Persistence not configured")
