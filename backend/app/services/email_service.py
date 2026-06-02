@@ -79,6 +79,24 @@ def send_excel_email(
         server.sendmail(settings.email_smtp_from, to, msg.as_string())
 
 
+def send_alert_email(*, to: list[str], subject: str, body_html: str) -> None:
+    """Send a plain HTML alert email (no attachment) to one or more recipients.
+
+    Uses the same SMTP settings/flow as send_excel_email(). Blocking — call
+    from a thread (asyncio.to_thread) when on the event loop.
+    """
+    msg = MIMEMultipart()
+    msg["From"] = settings.email_smtp_from
+    msg["To"] = ", ".join(to)
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body_html, "html"))
+
+    with smtplib.SMTP(settings.email_smtp_host, settings.email_smtp_port) as server:
+        server.starttls()
+        server.login(settings.email_smtp_user, settings.email_smtp_pass)
+        server.sendmail(settings.email_smtp_from, to, msg.as_string())
+
+
 def _sanitize_sheet_name(name: str) -> str:
     """Remove chars Excel forbids in sheet names and cap at 31 characters."""
     cleaned = name.translate(str.maketrans("", "", r'\/?*[]:' )).strip()

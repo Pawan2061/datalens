@@ -86,6 +86,22 @@ class Settings(BaseSettings):
     email_smtp_pass: str = ""
     email_smtp_from: str = ""
 
+    # Rate limiting — per-user burst protection on the chat endpoint.
+    # In-memory sliding window (no Redis in the stack). Admins bypass.
+    rate_limit_enabled: bool = True
+    rate_limit_per_minute: int = 15
+    rate_limit_per_hour: int = 150
+
+    # Cost alerts — email the team once a user's cumulative lifetime spend
+    # (total_cost_usd) first crosses this threshold. Alert-only; users are not
+    # blocked. No-op unless SMTP is configured and recipients are set.
+    cost_alert_threshold_usd: float = 2.0
+    cost_alert_recipients: list[str] = [
+        "vaibhav@ainocular.com",
+        "bhairav@ainocular.com",
+        "pawan@ainocular.com",
+    ]
+
     class Config:
         env_file = str(_ENV_FILE)
 

@@ -37,6 +37,10 @@ class UserDoc(BaseModel):
     usage_reset_date: str = ""  # date when today_* was last reset
     month_reset_date: str = ""
 
+    # True once the one-time "user crossed the cost-alert threshold" email has
+    # been sent for this user (cumulative lifetime spend). Prevents repeat alerts.
+    cost_alert_2usd_sent: bool = False
+
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     last_login_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     password_hash: str = ""

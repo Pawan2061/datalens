@@ -64,6 +64,25 @@ async def chat(
         if not request.customer_scope_name:
             request.customer_scope_name = bound_code
 
+    # ── Burst rate limit ──────────────────────────────────────────
+    # Reject runaway/abusive bursts cheaply, before any queue setup,
+    # guardrails, or LLM work. Admins bypass (matches quota behavior).
+    # Wrapped so a limiter error can never take down the chat endpoint.
+    if settings.rate_limit_enabled and role != "admin" and user_id:
+        try:
+            from app.auth.rate_limiter import check_rate_limit
+            rl = check_rate_limit(user_id)
+            if not rl.allowed:
+                raise HTTPException(
+                    status_code=429,
+                    detail=rl.reason,
+                    headers={"Retry-After": str(rl.retry_after)},
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # never block chat on a limiter failure
+
     session_id = request.session_id or uuid.uuid4().hex[:16]
     queue = _event_queues.get(session_id)
     if queue is None:

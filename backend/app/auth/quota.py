@@ -1,13 +1,71 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
 from app.auth.user_doc_cache import set_cached_user_doc
+from app.config import settings
 from app.db.insight_db import insight_db
 from app.schemas.persistence import QuotaCheckResult, UsageRecord
 
 logger = logging.getLogger(__name__)
+
+# Holds references to in-flight alert email tasks so they aren't garbage
+# collected before they finish (asyncio only keeps weak refs to tasks).
+_alert_tasks: set[asyncio.Task] = set()
+
+
+def _fire_cost_alert(doc: dict) -> None:
+    """Send the one-time cost-alert email to the team, without blocking.
+
+    SMTP is synchronous, so it runs in a worker thread via asyncio.to_thread.
+    Fully guarded — an email failure must never break usage recording.
+    """
+    try:
+        from app.services.email_service import send_alert_email
+
+        name = doc.get("name") or "(no name)"
+        email = doc.get("email") or "(no email)"
+        user_id = doc.get("id") or "(unknown)"
+        spend = doc.get("total_cost_usd", 0.0)
+        threshold = settings.cost_alert_threshold_usd
+        recipients = list(settings.cost_alert_recipients)
+
+        subject = f"[DataLens] Usage alert: {name} crossed ${threshold:.2f}"
+        body_html = (
+            "<p>Hello team,</p>"
+            f"<p>A DataLens user has crossed the <b>${threshold:.2f}</b> "
+            "cumulative usage threshold.</p>"
+            "<ul>"
+            f"<li><b>Name:</b> {name}</li>"
+            f"<li><b>Email:</b> {email}</li>"
+            f"<li><b>User ID:</b> {user_id}</li>"
+            f"<li><b>Total spend to date:</b> ${spend:.4f}</li>"
+            "</ul>"
+            "<p>This is an automated, informational notice — the user has not "
+            "been blocked. You may review their activity in the admin dashboard "
+            "if any action is needed.</p>"
+            "<p>— DataLens</p>"
+        )
+
+        async def _send():
+            try:
+                await asyncio.to_thread(
+                    send_alert_email,
+                    to=recipients,
+                    subject=subject,
+                    body_html=body_html,
+                )
+                logger.info("Cost-alert email sent for user=%s ($%.4f)", user_id, spend)
+            except Exception as exc:
+                logger.warning("Failed to send cost-alert email for user=%s: %s", user_id, exc)
+
+        task = asyncio.create_task(_send())
+        _alert_tasks.add(task)
+        task.add_done_callback(_alert_tasks.discard)
+    except Exception as exc:
+        logger.warning("Could not schedule cost-alert email: %s", exc)
 
 
 async def check_quota(user_doc: dict) -> QuotaCheckResult:
@@ -118,6 +176,23 @@ async def record_usage(
     doc["total_questions"] = doc.get("total_questions", 0) + questions
     doc["total_tokens"] = doc.get("total_tokens", 0) + total_tokens
     doc["total_cost_usd"] = round(doc.get("total_cost_usd", 0.0) + cost_usd, 6)
+
+    # ── Cost alert: email the team once a user's cumulative lifetime spend
+    # first crosses the threshold. Alert-only — the user is not blocked. The
+    # flag is set on the doc BEFORE upsert so it persists and the email fires
+    # exactly once; if SMTP is flaky this means at most one missed alert
+    # (acceptable, and we never retry-spam). No-op unless SMTP + recipients
+    # are configured.
+    threshold = settings.cost_alert_threshold_usd
+    if (
+        threshold > 0
+        and doc.get("total_cost_usd", 0.0) >= threshold
+        and not doc.get("cost_alert_2usd_sent", False)
+        and settings.cost_alert_recipients
+        and settings.email_smtp_user
+    ):
+        doc["cost_alert_2usd_sent"] = True
+        _fire_cost_alert(doc)
 
     users.upsert_item(doc)
     set_cached_user_doc(user_id, doc)
