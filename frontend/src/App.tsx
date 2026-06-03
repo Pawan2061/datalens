@@ -66,7 +66,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
-function ProtectedRoute({ children, adminOnly = false, privilegedOnly = false }: { children: ReactNode; adminOnly?: boolean; privilegedOnly?: boolean }) {
+function ProtectedRoute({ children, adminOnly = false, privilegedOnly = false, excludeModerator = false }: { children: ReactNode; adminOnly?: boolean; privilegedOnly?: boolean; excludeModerator?: boolean }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const user = useAuthStore((s) => s.user);
 
@@ -85,6 +85,11 @@ function ProtectedRoute({ children, adminOnly = false, privilegedOnly = false }:
   // Privileged routes (admin or manager). Moderator is allowed too — the
   // dashboard renders read-only for them and hides the Usage Logs tab.
   if (privilegedOnly && user?.role !== 'admin' && user?.role !== 'manager' && user?.role !== 'moderator') {
+    return <Navigate to="/" replace />;
+  }
+
+  // Routes that allow privileged users but not moderators (e.g. Analytics)
+  if (excludeModerator && user?.role === 'moderator') {
     return <Navigate to="/" replace />;
   }
 
@@ -179,7 +184,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/pending" element={<PendingApprovalPage />} />
         <Route path="/admin" element={<ProtectedRoute privilegedOnly><AdminDashboard /></ProtectedRoute>} />
-        <Route path="/analytics" element={<ProtectedRoute privilegedOnly><AnalyticsDashboard /></ProtectedRoute>} />
+        <Route path="/analytics" element={<ProtectedRoute privilegedOnly excludeModerator><AnalyticsDashboard /></ProtectedRoute>} />
         <Route path="/" element={<ProtectedRoute><HomeRoute /></ProtectedRoute>} />
         <Route path="/workspace/:workspaceId" element={<ProtectedRoute><ErrorBoundary><WorkspaceView /></ErrorBoundary></ProtectedRoute>} />
       </Routes>

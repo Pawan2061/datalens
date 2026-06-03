@@ -1358,7 +1358,7 @@ body {
 
 /* Message bubble */
 .chat-msg {
-  margin-bottom: 24px;
+  margin-bottom: 18px;
   animation: fade-in-up 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .chat-msg--user {
@@ -1383,12 +1383,12 @@ body {
 .chat-assistant-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 7px;
+  margin-bottom: 8px;
 }
 .chat-assistant-icon {
-  width: 26px; height: 26px;
-  border-radius: 8px;
+  width: 22px; height: 22px;
+  border-radius: 7px;
   background: linear-gradient(135deg, #6366f1, #f97316);
   display: flex;
   align-items: center;
@@ -1744,7 +1744,7 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-  max-width: 600px;
+  max-width: 764px;
   margin: 0 auto 12px;
 }
 .chat-suggestion-chip {
@@ -1773,7 +1773,7 @@ body {
 
 /* Input box */
 .chat-input-wrapper {
-  max-width: 600px;
+  max-width: 764px;
   margin: 0 auto;
 }
 .chat-input-box {
@@ -1890,7 +1890,7 @@ body {
 .dl-readable .wv-sb-item-text { padding: 10px 12px; }
 
 /* Bigger, easier-to-use input box */
-.dl-readable .chat-input-wrapper { max-width: 760px; }
+.dl-readable .chat-input-wrapper { max-width: 764px; }
 .dl-readable .chat-input-box { border-radius: 18px; }
 .dl-readable .chat-textarea {
   font-size: 16px;

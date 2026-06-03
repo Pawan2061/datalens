@@ -1193,7 +1193,7 @@ export default function AdminDashboard() {
             </>
           )}
 
-          {(isPrivileged || isModerator) && (
+          {isPrivileged && (
             <>
               <div className="adm-nav-group-label">Reports</div>
               <button className="adm-nav-item" onClick={() => navigate('/analytics')}>
@@ -1244,7 +1244,9 @@ export default function AdminDashboard() {
               {sectionTitles[key]}
             </button>
           ))}
-          <button className="adm-nav-item" onClick={() => navigate('/analytics')}>Analytics</button>
+          {isPrivileged && (
+            <button className="adm-nav-item" onClick={() => navigate('/analytics')}>Analytics</button>
+          )}
         </div>
       )}
 
