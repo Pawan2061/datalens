@@ -1533,7 +1533,7 @@ body {
   background: linear-gradient(135deg, #fff 0%, #fafaff 100%);
   border: 1px solid #e0e7ff;
   border-radius: 14px;
-  padding: 16px;
+  padding: 22px 24px;
   box-shadow: 0 2px 8px rgba(99,102,241,0.05);
   animation: scale-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   transition: box-shadow 0.2s;
@@ -1557,9 +1557,9 @@ body {
 
 /* Markdown-rendered narrative (expanded) — tables, lists, headers */
 .chat-compact-md {
-  font-size: 12px;
+  font-size: 13px;
   color: #374151;
-  line-height: 1.6;
+  line-height: 1.65;
   margin: 0 0 12px;
 }
 .chat-compact-md > *:first-child { margin-top: 0; }
@@ -1622,11 +1622,12 @@ body {
 .chat-compact-md table {
   width: 100%;
   border-collapse: collapse;
-  margin: 6px 0 12px;
-  font-size: 11.5px;
+  margin: 10px 0 16px;
+  font-size: 13px;
+  line-height: 1.5;
   background: #fff;
   border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: hidden;
 }
 .chat-compact-md thead {
@@ -1634,16 +1635,24 @@ body {
 }
 .chat-compact-md th,
 .chat-compact-md td {
-  padding: 6px 10px;
+  padding: 12px 18px;
   text-align: left;
   border-bottom: 1px solid #eef0f5;
   vertical-align: top;
 }
 .chat-compact-md th {
   font-weight: 600;
-  color: #111827;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  text-transform: uppercase;
   white-space: nowrap;
+  padding-top: 13px;
+  padding-bottom: 13px;
 }
+.chat-compact-md tbody tr:nth-child(even) { background: #fafbfd; }
+.chat-compact-md tbody tr:hover { background: #f3f4fb; }
+.chat-compact-md td { color: #374151; }
 .chat-compact-md tr:last-child td { border-bottom: none; }
 .chat-compact-md td:has(+ td:empty),
 .chat-compact-md td:empty { color: #9ca3af; }

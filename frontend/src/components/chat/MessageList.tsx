@@ -49,7 +49,7 @@ export default function MessageList({ messages, onFollowUp, onPushToCanvas, onDe
 
   return (
     <div className="chat-messages">
-      <div className="chat-messages-inner" style={{ maxWidth: compact ? '100%' : 820, padding: compact ? '20px 16px' : '32px 24px' }}>
+      <div className="chat-messages-inner" style={{ maxWidth: compact ? '100%' : 820, padding: compact ? '28px 32px' : '32px 24px' }}>
         {messages.map((msg) => (
           <MessageBubble
             key={msg.id}
