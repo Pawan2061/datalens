@@ -92,10 +92,18 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = 15
     rate_limit_per_hour: int = 150
 
-    # Cost alerts — email the team once a user's cumulative lifetime spend
-    # (total_cost_usd) first crosses this threshold. Alert-only; users are not
-    # blocked. No-op unless SMTP is configured and recipients are set.
-    cost_alert_threshold_usd: float = 2.0
+    # Cost alerts — email the team when a user's spend in the current day
+    # (today_cost_usd, resets at UTC midnight) first crosses the threshold for
+    # their role. Fires at most once per user per day. Alert-only; users are
+    # not blocked. No-op unless SMTP is configured and recipients are set.
+    cost_alert_threshold_usd: float = 2.0  # regular users
+    cost_alert_threshold_usd_admin: float = 10.0  # admins
+
+    # Daily hard block — a regular customer whose same-day spend (today_cost_usd,
+    # resets at UTC midnight) reaches this is blocked from chatting until an admin
+    # re-approves them. Privileged roles (admin/manager/moderator) are never
+    # blocked. 0 disables the block.
+    cost_block_threshold_usd_per_day: float = 4.0
     cost_alert_recipients: list[str] = [
         "vaibhav@ainocular.com",
         "bhairav@ainocular.com",

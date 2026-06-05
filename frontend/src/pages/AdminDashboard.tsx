@@ -17,7 +17,7 @@ import { createWorkspaceOnBackend } from '../services/api';
 import { API_BASE } from '../services/apiBase';
 
 type Section = 'dashboard' | 'workspaces' | 'managers' | 'users' | 'usage';
-type UserFilter = 'all' | 'pending' | 'active' | 'suspended';
+type UserFilter = 'all' | 'pending' | 'active' | 'suspended' | 'cost-blocked';
 
 /* ─── Types ─── */
 interface WorkspaceMember {
@@ -812,12 +812,18 @@ function UsersSection({ users, loading, onAction, headers, scopeCustomers, readO
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
 
-  const filtered = filter === 'all' ? users : users.filter((u) => u.status === filter);
+  const filtered =
+    filter === 'all'
+      ? users
+      : filter === 'cost-blocked'
+        ? users.filter((u) => u.cost_blocked)
+        : users.filter((u) => u.status === filter);
   const counts = {
     all: users.length,
     pending: users.filter((u) => u.status === 'pending').length,
     active: users.filter((u) => u.status === 'active').length,
     suspended: users.filter((u) => u.status === 'suspended').length,
+    'cost-blocked': users.filter((u) => u.cost_blocked).length,
   };
 
   const handleAction = async (action: string, userId: string, payload?: Record<string, unknown>) => {
@@ -842,9 +848,9 @@ function UsersSection({ users, loading, onAction, headers, scopeCustomers, readO
     <div className="adm-users">
       <div className="adm-tabs" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', gap: 8 }}>
-          {(['all', 'pending', 'active', 'suspended'] as UserFilter[]).map((f) => (
+          {(['all', 'pending', 'active', 'suspended', 'cost-blocked'] as UserFilter[]).map((f) => (
             <button key={f} className={`adm-tab ${filter === f ? 'adm-tab--active' : ''}`} onClick={() => setFilter(f)}>
-              {f.charAt(0).toUpperCase() + f.slice(1)}
+              {f === 'cost-blocked' ? 'Cost-blocked' : f.charAt(0).toUpperCase() + f.slice(1)}
               <span className="adm-tab-count">{counts[f]}</span>
             </button>
           ))}
@@ -896,7 +902,18 @@ function UsersSection({ users, loading, onAction, headers, scopeCustomers, readO
                   )}
                 </td>
                 <td><span style={{ fontFamily: 'monospace', fontSize: 12 }}>{u.customer_code || '—'}</span></td>
-                <td><StatusBadge status={u.status} /></td>
+                <td>
+                  <StatusBadge status={u.status} />
+                  {u.cost_blocked && (
+                    <span
+                      className="adm-badge adm-badge--suspended"
+                      title="Reached today's spend cap — chat paused until you approve"
+                      style={{ marginLeft: 6 }}
+                    >
+                      Cost-blocked
+                    </span>
+                  )}
+                </td>
                 <td>{u.today_questions}</td>
                 <td>{u.today_tokens?.toLocaleString()}</td>
                 <td>${u.month_cost_usd?.toFixed(2)}</td>
@@ -916,6 +933,7 @@ function UsersSection({ users, loading, onAction, headers, scopeCustomers, readO
                     ) : (
                       <>
                         {u.status === 'pending' && <button className="adm-action-btn adm-action-btn--success" title="Approve" onClick={() => handleAction('approve', u.id)}><Check size={14} /></button>}
+                        {u.cost_blocked && <button className="adm-action-btn adm-action-btn--success" title="Approve spend (re-enable chat for today)" onClick={() => handleAction('approve-spend', u.id)}><DollarSign size={14} /></button>}
                         {u.status !== 'suspended' && <button className="adm-action-btn adm-action-btn--warning" title="Suspend" onClick={() => handleAction('suspend', u.id)}><AlertTriangle size={14} /></button>}
                         {u.status === 'suspended' && <button className="adm-action-btn adm-action-btn--success" title="Reactivate" onClick={() => handleAction('approve', u.id)}><Check size={14} /></button>}
                         <button className="adm-action-btn" title="Set Limits" onClick={() => setLimitsUser(u)}><Settings size={14} /></button>
@@ -1129,6 +1147,10 @@ export default function AdminDashboard() {
       if (action === 'refresh') { await Promise.all([fetchStats(), fetchUsers(), fetchWorkspaces()]); return; }
       if (action === 'approve') await fetch(`${API_BASE}/api/admin/users/${userId}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ status: 'active' }) });
       else if (action === 'suspend') await fetch(`${API_BASE}/api/admin/users/${userId}`, { method: 'PUT', headers: headers(), body: JSON.stringify({ status: 'suspended' }) });
+      else if (action === 'approve-spend') {
+        await fetch(`${API_BASE}/api/admin/users/${userId}/approve-spend`, { method: 'POST', headers: headers() });
+        showToast('Chat re-enabled for this customer for the rest of today');
+      }
       else if (action === 'limits') await fetch(`${API_BASE}/api/admin/users/${userId}`, { method: 'PUT', headers: headers(), body: JSON.stringify(payload) });
       else if (action === 'delete') await fetch(`${API_BASE}/api/admin/users/${userId}`, { method: 'DELETE', headers: headers() });
       await Promise.all([fetchStats(), fetchUsers(), fetchWorkspaces()]);

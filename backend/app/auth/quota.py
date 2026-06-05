@@ -16,11 +16,13 @@ logger = logging.getLogger(__name__)
 _alert_tasks: set[asyncio.Task] = set()
 
 
-def _fire_cost_alert(doc: dict) -> None:
-    """Send the one-time cost-alert email to the team, without blocking.
+def _fire_cost_alert(doc: dict, threshold: float) -> None:
+    """Send the daily cost-alert email to the team, without blocking.
 
-    SMTP is synchronous, so it runs in a worker thread via asyncio.to_thread.
-    Fully guarded — an email failure must never break usage recording.
+    Fires at most once per user per day when their same-day spend crosses the
+    threshold for their role. SMTP is synchronous, so it runs in a worker
+    thread via asyncio.to_thread. Fully guarded — an email failure must never
+    break usage recording.
     """
     try:
         from app.services.email_service import send_alert_email
@@ -28,20 +30,23 @@ def _fire_cost_alert(doc: dict) -> None:
         name = doc.get("name") or "(no name)"
         email = doc.get("email") or "(no email)"
         user_id = doc.get("id") or "(unknown)"
-        spend = doc.get("total_cost_usd", 0.0)
-        threshold = settings.cost_alert_threshold_usd
+        role = doc.get("role") or "user"
+        today_spend = doc.get("today_cost_usd", 0.0)
+        total_spend = doc.get("total_cost_usd", 0.0)
         recipients = list(settings.cost_alert_recipients)
 
-        subject = f"[DataLens] Usage alert: {name} crossed ${threshold:.2f}"
+        subject = f"[DataLens] Daily usage alert: {name} crossed ${threshold:.2f} today"
         body_html = (
             "<p>Hello team,</p>"
-            f"<p>A DataLens user has crossed the <b>${threshold:.2f}</b> "
-            "cumulative usage threshold.</p>"
+            f"<p>A DataLens {role} has crossed the <b>${threshold:.2f}</b> "
+            "spend threshold within the current day (UTC).</p>"
             "<ul>"
             f"<li><b>Name:</b> {name}</li>"
             f"<li><b>Email:</b> {email}</li>"
             f"<li><b>User ID:</b> {user_id}</li>"
-            f"<li><b>Total spend to date:</b> ${spend:.4f}</li>"
+            f"<li><b>Role:</b> {role}</li>"
+            f"<li><b>Spend today:</b> ${today_spend:.4f}</li>"
+            f"<li><b>Total spend to date:</b> ${total_spend:.4f}</li>"
             "</ul>"
             "<p>This is an automated, informational notice — the user has not "
             "been blocked. You may review their activity in the admin dashboard "
@@ -57,7 +62,7 @@ def _fire_cost_alert(doc: dict) -> None:
                     subject=subject,
                     body_html=body_html,
                 )
-                logger.info("Cost-alert email sent for user=%s ($%.4f)", user_id, spend)
+                logger.info("Cost-alert email sent for user=%s ($%.4f)", user_id, today_spend)
             except Exception as exc:
                 logger.warning("Failed to send cost-alert email for user=%s: %s", user_id, exc)
 
@@ -115,6 +120,28 @@ async def check_quota(user_doc: dict) -> QuotaCheckResult:
             allowed=False,
             reason=f"Monthly cost limit reached (${max_c:.2f}).",
         )
+
+    # Daily hard block — regular customers only; privileged roles never blocked.
+    # Derived from today_cost_usd (resets at UTC midnight), so it clears itself
+    # for a new day. An admin re-approval stamps cost_block_cleared_date=today,
+    # which suppresses the block for the rest of the day. Admins are already
+    # exempt via the early return at the top of this function.
+    if user_doc.get("role") not in ("admin", "manager", "moderator"):
+        block_cap = settings.cost_block_threshold_usd_per_day
+        today_c = user_doc.get("today_cost_usd", 0.0)
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if (
+            block_cap > 0
+            and today_c >= block_cap
+            and user_doc.get("cost_block_cleared_date", "") != today_str
+        ):
+            return QuotaCheckResult(
+                allowed=False,
+                reason=(
+                    f"You've reached today's usage limit (${block_cap:.2f}). "
+                    f"Access is paused until an admin re-enables it — please contact your admin."
+                ),
+            )
 
     return QuotaCheckResult(
         allowed=True,
@@ -177,22 +204,28 @@ async def record_usage(
     doc["total_tokens"] = doc.get("total_tokens", 0) + total_tokens
     doc["total_cost_usd"] = round(doc.get("total_cost_usd", 0.0) + cost_usd, 6)
 
-    # ── Cost alert: email the team once a user's cumulative lifetime spend
-    # first crosses the threshold. Alert-only — the user is not blocked. The
-    # flag is set on the doc BEFORE upsert so it persists and the email fires
-    # exactly once; if SMTP is flaky this means at most one missed alert
-    # (acceptable, and we never retry-spam). No-op unless SMTP + recipients
-    # are configured.
-    threshold = settings.cost_alert_threshold_usd
+    # ── Cost alert: email the team when a user's same-day spend first crosses
+    # the threshold for their role ($10 admins, $2 regular users). Alert-only —
+    # the user is not blocked. Fires at most once per user per day: we stamp
+    # cost_alert_sent_date with today (UTC) BEFORE upsert so the email fires
+    # exactly once per day even under concurrent requests; the daily counter
+    # reset above lets it fire again the next day. If SMTP is flaky this means
+    # at most one missed alert (acceptable, no retry-spam). No-op unless SMTP +
+    # recipients are configured.
+    threshold = (
+        settings.cost_alert_threshold_usd_admin
+        if doc.get("role") == "admin"
+        else settings.cost_alert_threshold_usd
+    )
     if (
         threshold > 0
-        and doc.get("total_cost_usd", 0.0) >= threshold
-        and not doc.get("cost_alert_2usd_sent", False)
+        and doc.get("today_cost_usd", 0.0) >= threshold
+        and doc.get("cost_alert_sent_date", "") != today_str
         and settings.cost_alert_recipients
         and settings.email_smtp_user
     ):
-        doc["cost_alert_2usd_sent"] = True
-        _fire_cost_alert(doc)
+        doc["cost_alert_sent_date"] = today_str
+        _fire_cost_alert(doc, threshold)
 
     users.upsert_item(doc)
     set_cached_user_doc(user_id, doc)

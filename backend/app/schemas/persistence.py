@@ -37,9 +37,17 @@ class UserDoc(BaseModel):
     usage_reset_date: str = ""  # date when today_* was last reset
     month_reset_date: str = ""
 
-    # True once the one-time "user crossed the cost-alert threshold" email has
-    # been sent for this user (cumulative lifetime spend). Prevents repeat alerts.
+    # Legacy: was set once when lifetime spend crossed the threshold. Kept for
+    # backward compatibility; no longer read by the daily alert logic.
     cost_alert_2usd_sent: bool = False
+    # Date (YYYY-MM-DD, UTC) the daily cost-alert email was last sent for this
+    # user. Threshold is role-based ($10 admins, $2 users). Resets each day so
+    # the alert can fire again, but at most once per day. Empty = never sent.
+    cost_alert_sent_date: str = ""
+    # Date (YYYY-MM-DD, UTC) an admin last re-approved this user after a daily
+    # cost block. While this equals today, the per-day $ block is suppressed
+    # (admin-granted for the rest of the day). Empty = never approved.
+    cost_block_cleared_date: str = ""
 
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     last_login_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

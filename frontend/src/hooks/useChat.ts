@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { useChatStore } from '../store/chatStore';
+import { useAuthStore } from '../store/authStore';
 import { sendMessage as apiSendMessage, sendDataEmail, createEventSource, type HistoryMessage } from '../services/api';
 import type { ChatMessage, AgentStep, InsightResult } from '../types/chat';
 
@@ -267,6 +268,10 @@ export function useChat(workspaceId?: string) {
           if (eventSourceRef.current === es) {
             eventSourceRef.current = null;
           }
+          // Refresh the user so today_cost_usd (and the cost warning banner)
+          // reflect the spend just recorded by this turn. Fire-and-forget;
+          // swallow errors so a flaky /me never surfaces as an unhandled rejection.
+          void useAuthStore.getState().refreshUser().catch(() => {});
         });
 
         es.onerror = () => {

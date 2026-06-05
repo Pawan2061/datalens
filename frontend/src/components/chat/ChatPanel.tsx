@@ -1,6 +1,8 @@
 import { useCallback } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import type { ChatSession, InsightResult } from '../../types/chat';
 import type { ScopeCustomer } from '../../types/workspace';
+import { useAuthStore } from '../../store/authStore';
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
 import CustomerScopeSelector from '../workspace/CustomerScopeSelector';
@@ -39,6 +41,17 @@ export default function ChatPanel({
   const messages = session?.messages || [];
   const showSuggestions = messages.length === 0 && hasConnection;
 
+  // Soft cost warning for privileged users (admin/manager/moderator) — these
+  // roles are never blocked by the daily cap, so we only warn them once their
+  // own same-day spend crosses the warn threshold ($2 by default).
+  const user = useAuthStore((s) => s.user);
+  const isPrivileged = useAuthStore((s) => s.isPrivileged);
+  const isModerator = useAuthStore((s) => s.isModerator);
+  const warnThreshold = user?.cost_warn_threshold_usd ?? 2;
+  const todaySpend = user?.today_cost_usd ?? 0;
+  const showCostWarning =
+    (isPrivileged || isModerator) && warnThreshold > 0 && todaySpend >= warnThreshold;
+
   const handleFollowUp = useCallback(
     (question: string) => {
       onFollowUp(question);
@@ -58,6 +71,29 @@ export default function ChatPanel({
             selectedName={customerScopeName}
             onScopeChange={onScopeChange}
           />
+        </div>
+      )}
+
+      {showCostWarning && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            margin: '8px 12px 0',
+            padding: '10px 14px',
+            background: '#fffbeb',
+            border: '1px solid #fcd34d',
+            borderRadius: 8,
+            color: '#92400e',
+            fontSize: 13,
+          }}
+        >
+          <AlertTriangle size={16} color="#d97706" />
+          <span>
+            You've used <strong>${todaySpend.toFixed(2)}</strong> today. This is a
+            heads-up only — your access is not limited.
+          </span>
         </div>
       )}
 

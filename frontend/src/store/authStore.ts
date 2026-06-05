@@ -21,6 +21,11 @@ export interface User {
   today_tokens: number;
   today_cost_usd: number;
   month_cost_usd: number;
+  // Set by GET /api/admin/users (derived server-side); only present in admin lists.
+  cost_blocked?: boolean;
+  // Set by GET /api/auth/me — server-side cost thresholds (avoid hard-coding).
+  cost_warn_threshold_usd?: number;
+  cost_block_threshold_usd_per_day?: number;
 }
 
 interface AuthState {

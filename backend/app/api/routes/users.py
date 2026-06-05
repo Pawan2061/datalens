@@ -259,4 +259,10 @@ async def login(req: LoginRequest):
 
 @router.get("/api/auth/me")
 async def get_me(current_user: dict = Depends(get_current_user)):
-    return current_user
+    # Surface the cost thresholds so the frontend warning banner / admin UI use
+    # server values rather than hard-coded numbers that could drift from config.
+    return {
+        **current_user,
+        "cost_warn_threshold_usd": settings.cost_alert_threshold_usd,
+        "cost_block_threshold_usd_per_day": settings.cost_block_threshold_usd_per_day,
+    }

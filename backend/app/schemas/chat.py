@@ -22,8 +22,13 @@ class ChatRequest(BaseModel):
     analysis_mode: Literal["quick", "deep"] = "quick"
     workspace_id: str = ""
     user_id: str = ""  # for quota checking (set by frontend or auth middleware)
-    customer_scope: str = ""       # customer_id to filter all queries; empty = admin (no filter)
+    customer_scope: str = ""       # customer identifier to filter all queries; empty = admin (no filter)
     customer_scope_name: str = ""  # human-readable name shown in "Viewing as" dropdown
+    # Column the scope value pins against. The server overrides this for locked
+    # users (always "customer_code"); the privileged "Viewing as" dropdown
+    # sends a customer_id, so the default is "customer_id". Only the column
+    # name is taken from the body — it can never widen access.
+    customer_scope_field: str = "customer_id"
     history: list[HistoryMessage] = Field(default_factory=list)
 
 

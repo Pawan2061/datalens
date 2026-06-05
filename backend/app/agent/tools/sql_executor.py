@@ -20,19 +20,60 @@ _sql_result_cache: TTLCache[dict] = TTLCache(ttl_seconds=15, max_size=128)
 _customer_scope_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
     "customer_scope", default=""
 )
+# The column the scope value pins against. Locked users are bound by
+# customer_code; the privileged "Viewing as" dropdown passes a customer_id.
+# Either way the guard also accepts the other customer column for safety —
+# both identify exactly one customer.
+_customer_scope_field_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "customer_scope_field", default="customer_id"
+)
 
-# Tables that carry customer-level data and MUST be filtered by customer_id
-# whenever a customer-scoped user is making a query.
+# Tables that carry customer-level data and MUST be filtered to the scoped
+# customer whenever a customer-scoped user is making a query.
 _CUSTOMER_SENSITIVE_TABLES = re.compile(
     r"\b(invoice|customer_master)\b", re.IGNORECASE
 )
-# Matches customer_id filtered against a LITERAL value (string or number).
-# Must NOT match JOIN conditions like "b.customer_id = cm.customer_id" —
-# those have another identifier after =, not a quote or digit.
-_CUSTOMER_ID_FILTER = re.compile(
-    r"\bcustomer_id\s*(?:=\s*(?:['\"]|\d)|IN\s*\()",
+
+# Constructs that BROADEN a customer filter beyond a single pinned value.
+# These are the classic ways a query "looks filtered" yet still returns other
+# customers' rows, so in scoped mode they are blocked outright:
+#   customer_id != X / <> X         → everyone except one
+#   customer_id NOT IN (...)        → everyone except a few
+#   customer_id IN (SELECT ...)     → a whole subquery's worth of customers
+_SCOPE_BROADENING = re.compile(
+    r"customer_(?:id|code)\s*(?:!=|<>)"
+    r"|customer_(?:id|code)\s+NOT\s+IN"
+    r"|customer_(?:id|code)\s+IN\s*\(\s*SELECT",
     re.IGNORECASE,
 )
+
+# Any customer_id / customer_code equated to a STRING or NUMERIC literal.
+# Used to verify every such literal equals the scoped value — catches
+# "customer_id = 'A' OR customer_id = 'B'" style broadening.
+_CUSTOMER_ID_LITERAL_EQ = re.compile(
+    r"customer_(?:id|code)\s*=\s*(?:'([^']*)'|(\d+))",
+    re.IGNORECASE,
+)
+
+
+def _scope_pin_ok(sql: str, scope: str) -> bool:
+    """True iff `sql` pins a customer column to EXACTLY the scoped value.
+
+    Accepts `customer_id`/`customer_code = '<scope>'`, the unquoted numeric
+    form, or a single-value `IN ('<scope>')`. The value must equal the scope
+    exactly — a pin to any other customer does not count.
+    """
+    esc = re.escape(scope)
+    pinned = re.compile(
+        rf"customer_(?:id|code)\s*=\s*'{esc}'"
+        rf"|customer_(?:id|code)\s*=\s*{esc}(?![\w])"
+        rf"|customer_(?:id|code)\s+IN\s*\(\s*'{esc}'\s*\)"
+        rf"|customer_(?:id|code)\s+IN\s*\(\s*{esc}\s*\)",
+        re.IGNORECASE,
+    )
+    return bool(pinned.search(sql))
+
+
 _NONDETERMINISTIC_SQL_MARKERS = (
     "CURRENT_TIMESTAMP",
     "CURRENT_DATE",
@@ -75,25 +116,47 @@ async def execute_sql(sql: str, connection_id: str) -> str:
         )
 
     # ── Customer scope guard (hard enforcement) ───────────────────
-    # The LLM is instructed via the system prompt to always filter by
-    # customer_id for scoped users. This is the code-level backstop: if
-    # the generated SQL touches customer-sensitive tables but omits the
-    # filter, the query is blocked and the LLM is told to retry with it.
+    # The LLM is instructed via the system prompt to pin every customer-table
+    # query to the scoped customer. This is the code-level backstop and the
+    # real security boundary: any query touching invoice / customer_master in
+    # scoped mode is BLOCKED unless it pins a customer column to EXACTLY the
+    # scoped value and contains no broadening construct. A regex "a filter
+    # exists" check is NOT enough — `customer_id IN (SELECT ...)` or a filter
+    # on city/state would otherwise leak every other customer's rows.
     scope = _customer_scope_ctx.get()
-    if scope:
-        touches_sensitive = bool(_CUSTOMER_SENSITIVE_TABLES.search(sql))
-        has_filter = bool(_CUSTOMER_ID_FILTER.search(sql))
-        if touches_sensitive and not has_filter:
+    if scope and _CUSTOMER_SENSITIVE_TABLES.search(sql):
+        field = _customer_scope_field_ctx.get() or "customer_id"
+
+        # (a) Reject constructs that broaden past a single pinned customer.
+        broadened = bool(_SCOPE_BROADENING.search(sql))
+
+        # (b) Every customer_id/code equality literal must equal the scope —
+        #     blocks "customer_id = 'X' OR customer_id = 'other'".
+        other_customer = any(
+            (m.group(1) if m.group(1) is not None else m.group(2)) != scope
+            for m in _CUSTOMER_ID_LITERAL_EQ.finditer(sql)
+        )
+
+        # (c) There must be at least one exact pin to the scoped value.
+        pinned = _scope_pin_ok(sql, scope)
+
+        if broadened or other_customer or not pinned:
             import logging
             logging.getLogger("guardrails.scope").warning(
-                "SCOPE VIOLATION blocked | scope=%s | sql=%s", scope, sql[:300],
+                "SCOPE VIOLATION blocked | scope=%s field=%s "
+                "pinned=%s broadened=%s other_customer=%s | sql=%s",
+                scope, field, pinned, broadened, other_customer, sql[:300],
             )
             return json.dumps({
                 "error": (
-                    f"Scope violation: this query accesses customer data tables "
-                    f"(invoice / customer_master) without filtering by customer_id. "
-                    f"You MUST add 'WHERE customer_id = ''{scope}''' "
-                    f"(or an equivalent CTE/subquery filter) and retry."
+                    f"Scope violation: in customer-scoped mode every query that "
+                    f"touches invoice / customer_master must restrict results to "
+                    f"the single scoped customer and nothing else. Rewrite the "
+                    f"query so it includes 'WHERE {field} = ''{scope}''' "
+                    f"(or the same filter inside each CTE/subquery), remove any "
+                    f"customer_id/customer_code IN (subquery), != , <> or NOT IN, "
+                    f"and do not reference any other customer's id, code, name, "
+                    f"city or state. Retry with that filter."
                 ),
                 "data": [], "columns": [], "row_count": 0, "duration_ms": 0,
                 "scope_blocked": True,

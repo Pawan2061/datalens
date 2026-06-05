@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.routes.users import get_admin_user, get_admin_or_moderator
 from app.auth.password import hash_password
+from app.auth.user_doc_cache import invalidate_cached_user_doc
+from app.config import settings
 from app.db.insight_db import insight_db
 from app.schemas.persistence import AdminUserCreate, AdminUserUpdate
 from app.services import user_management
@@ -13,9 +15,39 @@ from app.services import user_management
 router = APIRouter()
 
 
+def _is_cost_blocked(doc: dict, today_str: str | None = None) -> bool:
+    """Derive whether a user is currently blocked by the daily cost cap.
+
+    Mirrors the rule in auth.quota.check_quota: privileged roles are never
+    blocked; a regular user is blocked when today's spend has reached the cap
+    and an admin has not re-approved them today. today_cost_usd is only counted
+    when it belongs to today's window (usage_reset_date == today) — otherwise
+    it is stale from a prior day that hasn't been lazily reset yet.
+    """
+    if doc.get("role") in ("admin", "manager", "moderator"):
+        return False
+    cap = settings.cost_block_threshold_usd_per_day
+    if cap <= 0:
+        return False
+    today_str = today_str or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_cost = (
+        doc.get("today_cost_usd", 0.0)
+        if doc.get("usage_reset_date", "") == today_str
+        else 0.0
+    )
+    return today_cost >= cap and doc.get("cost_block_cleared_date", "") != today_str
+
+
 def _clean(doc: dict) -> dict:
     """Strip Cosmos DB metadata and sensitive fields from a document."""
     return {k: v for k, v in doc.items() if not k.startswith("_") and k != "password_hash"}
+
+
+def _clean_annotated(doc: dict, today_str: str | None = None) -> dict:
+    """_clean plus a derived `cost_blocked` flag for admin UI display."""
+    out = _clean(doc)
+    out["cost_blocked"] = _is_cost_blocked(doc, today_str)
+    return out
 
 
 # ── Create user (admin-driven) ──────────────────────────────────────
@@ -104,7 +136,8 @@ async def list_users(admin: dict = Depends(get_admin_or_moderator)):
     results = list(
         users.query_items(query=query, enable_cross_partition_query=True)
     )
-    return [_clean(doc) for doc in results]
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return [_clean_annotated(doc, today_str) for doc in results]
 
 
 # ── Get single user ─────────────────────────────────────────────────
@@ -124,7 +157,39 @@ async def get_user(user_id: str, admin: dict = Depends(get_admin_or_moderator)):
     )
     if not results:
         raise HTTPException(status_code=404, detail="User not found")
-    return _clean(results[0])
+    return _clean_annotated(results[0])
+
+
+# ── Approve spend (clear a daily cost block) ────────────────────────
+
+@router.post("/api/admin/users/{user_id}/approve-spend")
+async def approve_spend(user_id: str, admin: dict = Depends(get_admin_user)):
+    """Re-enable a customer blocked by the daily cost cap, for the rest of today.
+
+    Stamps cost_block_cleared_date = today (UTC). While that equals today the
+    daily $ block is suppressed in check_quota; the cap re-arms automatically
+    the next day. Today's spend is preserved (still counts toward monthly/total).
+    """
+    if not insight_db.is_ready:
+        raise HTTPException(status_code=503, detail="Persistence not configured")
+
+    users = insight_db.container("users")
+    query = "SELECT * FROM c WHERE c.id = @id"
+    params = [{"name": "@id", "value": user_id}]
+    results = list(
+        users.query_items(
+            query=query, parameters=params, enable_cross_partition_query=True
+        )
+    )
+    if not results:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    doc = results[0]
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    doc["cost_block_cleared_date"] = today_str
+    users.upsert_item(doc)
+    invalidate_cached_user_doc(user_id)  # hygiene; gating already reads fresh
+    return _clean_annotated(doc, today_str)
 
 
 # ── Update user (approve, set limits, suspend, change role) ─────────
@@ -159,7 +224,7 @@ async def update_user(
         doc[key] = value
 
     users.upsert_item(doc)
-    return _clean(doc)
+    return _clean_annotated(doc)
 
 
 # ── Delete user ──────────────────────────────────────────────────────
@@ -204,13 +269,14 @@ async def admin_stats(admin: dict = Depends(get_admin_or_moderator)):
         )
     )
 
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    month_str = datetime.now(timezone.utc).strftime("%Y-%m")
+
     total_users = len(all_users)
     active_users = sum(1 for u in all_users if u.get("status") == "active")
     pending_users = sum(1 for u in all_users if u.get("status") == "pending")
     suspended_users = sum(1 for u in all_users if u.get("status") == "suspended")
-
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    month_str = datetime.now(timezone.utc).strftime("%Y-%m")
+    cost_blocked_users = sum(1 for u in all_users if _is_cost_blocked(u, today_str))
 
     total_questions_today = 0
     total_tokens_today = 0
@@ -229,13 +295,14 @@ async def admin_stats(admin: dict = Depends(get_admin_or_moderator)):
     sorted_users = sorted(
         all_users, key=lambda u: u.get("created_at", ""), reverse=True
     )
-    recent_signups = [_clean(u) for u in sorted_users[:5]]
+    recent_signups = [_clean_annotated(u, today_str) for u in sorted_users[:5]]
 
     return {
         "total_users": total_users,
         "active_users": active_users,
         "pending_users": pending_users,
         "suspended_users": suspended_users,
+        "cost_blocked_users": cost_blocked_users,
         "total_questions_today": total_questions_today,
         "total_tokens_today": total_tokens_today,
         "total_cost_today": round(total_cost_today, 4),

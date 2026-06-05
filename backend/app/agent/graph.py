@@ -21,7 +21,7 @@ from app.agent.tools import (
     execute_sql,
     refresh_schema,
 )
-from app.agent.tools.sql_executor import _customer_scope_ctx
+from app.agent.tools.sql_executor import _customer_scope_ctx, _customer_scope_field_ctx
 from app.agent.tools.api_tool_factory import build_workspace_api_tools, describe_api_tools_for_prompt
 from app.llm.openai_llm import get_planner_llm, get_synthesis_llm
 
@@ -297,6 +297,7 @@ async def run_agent(
     user_id: str = "",
     customer_scope: str = "",
     customer_scope_name: str = "",
+    customer_scope_field: str = "customer_id",
 ) -> dict | None:
     """Run the LangGraph ReAct agent and stream SSE events.
 
@@ -497,17 +498,23 @@ async def run_agent(
     scope_addendum = ""
     if customer_scope:
         display_name = customer_scope_name or customer_scope
+        scope_field = customer_scope_field or "customer_id"
         scope_addendum = (
             f"\n\n━━ CUSTOMER SCOPE FILTER ━━\n"
             f"You are operating in CUSTOMER mode. The user is viewing as: {display_name}.\n"
-            f"customer_id = {customer_scope}\n"
+            f"{scope_field} = {customer_scope}\n"
             f"CRITICAL: Every SQL query that touches `invoice` or `customer_master` "
-            f"MUST include a WHERE clause (or CTE-level filter) restricting results to "
-            f"customer_id = '{customer_scope}'. This is enforced at the execution layer — "
-            f"queries missing the filter will be rejected and you will need to retry.\n"
-            f"Tables that do NOT carry customer_id (e.g. stock, item_master) do not need "
+            f"MUST include a WHERE clause (or a filter inside EVERY CTE/subquery that "
+            f"reads those tables) restricting results to {scope_field} = '{customer_scope}'. "
+            f"This is enforced at the execution layer — a query that does not pin "
+            f"{scope_field} to '{customer_scope}', or that uses {scope_field} with "
+            f"IN (subquery), != , <> or NOT IN, or that filters by another customer's "
+            f"name / city / state instead, will be REJECTED and you must retry.\n"
+            f"Tables that do NOT carry customer data (e.g. stock, item_master) do not need "
             f"the filter — they represent shared inventory visible to all customers.\n"
-            f"NEVER return invoice or customer_master rows for any customer_id other than '{customer_scope}'.\n"
+            f"NEVER return invoice or customer_master rows for any customer other than "
+            f"'{display_name}' ({scope_field} = '{customer_scope}'), and never aggregate "
+            f"across multiple customers.\n"
             f"FOR EXTERNAL API TOOLS: Any input parameter that names the customer "
             f"(customer_id, CUSTOMER_CODE, cust_id, etc.) is pre-filled with "
             f"'{customer_scope}'. Call the tool directly — DO NOT ask the user for "
@@ -631,6 +638,7 @@ async def run_agent(
     # The token ensures we restore the previous value even if this coroutine
     # is nested (e.g. a refresh running inside another agent call).
     _scope_token = _customer_scope_ctx.set(customer_scope or "")
+    _scope_field_token = _customer_scope_field_ctx.set(customer_scope_field or "customer_id")
     agent_loop_start = time.perf_counter()
     try:
      async for chunk in graph.astream(
@@ -884,6 +892,7 @@ async def run_agent(
         timer.add("agent_loop", (time.perf_counter() - agent_loop_start) * 1000)
     finally:
         _customer_scope_ctx.reset(_scope_token)
+        _customer_scope_field_ctx.reset(_scope_field_token)
 
     # ── Streaming synthesis (runs after the agent finishes all SQL) ──
     # analyze_results is no longer an agent tool — synthesis runs here so

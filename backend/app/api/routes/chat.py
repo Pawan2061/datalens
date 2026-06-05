@@ -59,10 +59,18 @@ async def chat(
     bound_code = (current_user.get("customer_code") or "").strip()
     if role not in ("admin", "manager", "moderator") and bound_code:
         request.customer_scope = bound_code
+        # Locked users are bound by customer_code, so the scope value IS a
+        # customer_code — pin the SQL filter on that column, not customer_id
+        # (which would silently match nothing and break their queries).
+        request.customer_scope_field = "customer_code"
         # We don't have the resolved display name here without a workspace lookup;
         # pass the code itself if no name was supplied by the client.
         if not request.customer_scope_name:
             request.customer_scope_name = bound_code
+    else:
+        # Privileged "Viewing as" dropdown sends a customer_id. Never trust a
+        # client-supplied column name; force the known-safe default.
+        request.customer_scope_field = "customer_id"
 
     # ── Burst rate limit ──────────────────────────────────────────
     # Reject runaway/abusive bursts cheaply, before any queue setup,
@@ -181,6 +189,7 @@ async def chat(
                 user_id=request.user_id,
                 customer_scope=request.customer_scope,
                 customer_scope_name=request.customer_scope_name,
+                customer_scope_field=request.customer_scope_field,
             )
         )
 
@@ -200,6 +209,7 @@ async def _run_langgraph_pipeline(
     user_id: str = "",
     customer_scope: str = "",
     customer_scope_name: str = "",
+    customer_scope_field: str = "customer_id",
 ) -> None:
     """Run the LangGraph ReAct agent, pushing events to the SSE queue."""
     # Note this workspace/connection/mode as "live" so the cache warmer keeps
@@ -216,6 +226,7 @@ async def _run_langgraph_pipeline(
             user_id=user_id,
             customer_scope=customer_scope,
             customer_scope_name=customer_scope_name,
+            customer_scope_field=customer_scope_field,
         )
 
         # Record analytics event (includes per-step timings)
