@@ -291,13 +291,20 @@ def _build_success(
                 return None
         return None
 
+    # SUM answers "total stock / how much in all". MAX answers single-roll
+    # questions ("is N meters available?") — fabric is cut from ONE continuous
+    # roll, so availability of N depends on the longest single piece, not the
+    # sum. Both are computed across ALL rows before the LLM row cap so the
+    # synthesis step has accurate aggregates regardless of truncation.
     numeric_totals: dict[str, float] = {}
+    numeric_maxes: dict[str, float] = {}
     if rows:
         for col in (rows[0] or {}).keys():
             vals = [_to_float(r.get(col)) for r in rows]
             vals = [v for v in vals if v is not None]
             if vals:
                 numeric_totals[col] = round(sum(vals), 2)
+                numeric_maxes[col] = round(max(vals), 2)
 
     # Cap rows + compact each row to keep the ReAct context under budget.
     # ERP responses often embed nested arrays (e.g. LINE_ITEMS_ARRAY) that make
@@ -317,6 +324,11 @@ def _build_success(
     }
     if numeric_totals:
         payload["numeric_totals"] = numeric_totals
+    # MAX per numeric column answers single-roll availability ("is N m
+    # available?"). Computed across ALL rows before the row cap, so the
+    # synthesis step sees the true longest piece even when rows are truncated.
+    if numeric_maxes:
+        payload["numeric_maxes"] = numeric_maxes
     # When an API tool names its balance column, pre-extract its total so the
     # synthesis LLM has a single unambiguous figure to quote — no column-picking.
     if balance_column and balance_column in numeric_totals:

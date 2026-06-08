@@ -103,6 +103,31 @@ AGGREGATE VALUES — USE PRE-COMPUTED TOTALS (CRITICAL):
   even if only 50 of 242 rows are visible in `data`.
 - If `numeric_totals` is absent, note that figures are based on a sample.
 
+FABRIC STOCK — SINGLE-ROLL LENGTH AVAILABILITY (MANDATORY when it applies):
+- APPLIES when the data has a per-piece meters column (PIECE_DISPVAL, or PIECE_VALUE)
+  AND the user asks whether a specific length N is available — e.g. "N m hai kya?",
+  "N meter milega?", "N mtr available?", "do you have N m?", "N meter chahiye".
+- Each row is ONE physical roll. Fabric is cut from ONE continuous roll, so you CANNOT
+  make an N-meter cut by adding two shorter rolls.
+- THE ONLY VALID TEST: N meters is available IF AND ONLY IF the longest single roll,
+  `numeric_maxes.PIECE_DISPVAL` (fall back to `numeric_maxes.PIECE_VALUE`), is >= N.
+  Use `numeric_maxes` for this — NEVER `numeric_totals` (the SUM), and NEVER require a
+  roll exactly equal to N.
+- YOUR SUMMARY LINE MUST OPEN WITH A YES/NO VERDICT — it is FORBIDDEN to lead with
+  "Total stock: X m" for a length question. Mirror the user's language (Hinglish → Hinglish):
+    • max >= N  → "Haan, <N> m available hai." Then name a qualifying roll (the smallest
+      row whose meters >= N) with its warehouse. Total stock may follow as context only.
+    • max < N but `numeric_totals` >= N, and the user did NOT demand a single piece →
+      "Single continuous piece nahi hai, lekin chhote pieces jod ke ban sakta hai
+      (alag-alag rolls)." Mention the longest roll and the total.
+    • max < N and the user demanded a single piece ("single piece", "ek piece", "ek than",
+      "continuous") → "Nahi, single piece mein nahi — sabse bada roll <max> m hai."
+    • `numeric_totals` < N → "Nahi, total stock hi sirf <total> m hai."
+- WORKED EXAMPLE: rows have PIECE_DISPVAL values [96.7, 6.8, 4.4, 3.7, ...], total 262.55,
+  user asks "60 m hai kya?". `numeric_maxes.PIECE_DISPVAL = 96.7 >= 60` →
+  "Haan, 60 m available hai (96.7 m ka roll, Boisar se cut hoga)." Replying "60 m nahi" or
+  leading with "Total stock 262.55 m" here is WRONG — a 96.7 m roll covers 60 m.
+
 OUTSTANDING / BALANCE COLUMN SELECTION (apply when reporting receivables):
 - If the result contains `primary_balance_total`, that IS the outstanding total — use it
   directly. Do NOT pick any other column. Do NOT recalculate. Just format and quote it.
@@ -206,6 +231,20 @@ async def _stream_synthesis(
                     vals = [row.get(col) for row in all_data if isinstance(row.get(col), (int, float))]
                     if vals:
                         numeric_totals[col] = round(sum(vals), 2)
+        # numeric_maxes = the single largest value per numeric column. For
+        # fabric, MAX(PIECE_DISPVAL) is the longest single roll and is the ONLY
+        # correct test for "is N meters available?" (a cut comes from one roll,
+        # never summed). Pre-computed in api_tool_factory across ALL rows; for
+        # SQL results compute from all_data.
+        if r.get("numeric_maxes"):
+            numeric_maxes: dict = r["numeric_maxes"]
+        else:
+            numeric_maxes = {}
+            if all_data:
+                for col in (all_data[0] or {}).keys():
+                    vals = [row.get(col) for row in all_data if isinstance(row.get(col), (int, float))]
+                    if vals:
+                        numeric_maxes[col] = round(max(vals), 2)
         entry: dict = {
             "description": r.get("description", ""),
             "columns": r.get("columns", []),
@@ -214,6 +253,8 @@ async def _stream_synthesis(
         }
         if numeric_totals:
             entry["numeric_totals"] = numeric_totals
+        if numeric_maxes:
+            entry["numeric_maxes"] = numeric_maxes
         clean_results.append(entry)
 
     if not clean_results:
