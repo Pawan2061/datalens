@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { API_BASE } from '../services/apiBase';
+import { useChatStore } from './chatStore';
 
 export interface User {
   id: string;
@@ -115,6 +116,9 @@ export const useAuthStore = create<AuthState>()(
           body: JSON.stringify({ email, password, recaptcha_token: recaptchaToken }),
         });
         await applyAuthResponse(response, set, 'Login failed');
+        // Drop any chat state left in memory/localStorage by a previous user on
+        // this browser before this user loads their own history from the backend.
+        useChatStore.getState().reset();
       },
 
       refreshUser: async () => {
@@ -139,7 +143,10 @@ export const useAuthStore = create<AuthState>()(
 
       logout: () => {
         set({ user: null, token: null, isAuthenticated: false, ...deriveFlags(null) });
-        // Clear per-user stores so next login doesn't see stale data
+        // Clear per-user stores so next login doesn't see stale data. Reset the
+        // in-memory chat store too — removing localStorage alone leaves sessions
+        // live in memory (logout is a client-side route change, not a reload).
+        useChatStore.getState().reset();
         localStorage.removeItem('datalens-workspaces');
         localStorage.removeItem('datalens-chat');
       },

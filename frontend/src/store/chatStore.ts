@@ -47,6 +47,10 @@ interface ChatState {
   loadSessionsFromBackend: (workspaceId: string) => Promise<void>;
   syncSessionToBackend: (session: ChatSession) => Promise<void>;
   clearAllSessions: (workspaceId: string) => void;
+  // Wipe ALL in-memory chat state (no backend calls). Called at the auth
+  // boundary (login/logout) so one user never sees another user's history
+  // on a shared browser. localStorage is rewritten empty by the persist layer.
+  reset: () => void;
 }
 
 export const useChatStore = create<ChatState>()(
@@ -298,6 +302,16 @@ export const useChatStore = create<ChatState>()(
             : state.activeSessionId,
         }));
         clearAllSessionsOnBackend(workspaceId).catch(() => {});
+      },
+
+      reset: () => {
+        // Cancel any pending debounced saves so a previous user's session
+        // can't be flushed to the backend after the switch.
+        for (const id of Object.keys(_saveTimers)) {
+          clearTimeout(_saveTimers[id]);
+          delete _saveTimers[id];
+        }
+        set({ sessions: [], activeSessionId: null, _backendLoaded: {} });
       },
     }),
     {

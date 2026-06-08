@@ -149,21 +149,30 @@ def is_conversational(message: str, has_history: bool = False) -> bool:
         if kw in cleaned:
             return False
 
-    # Very short messages without data keywords are likely conversational —
-    # but only when there's no prior history. With history, a short message
-    # is probably a follow-up data instruction ("ok go ahead", "unke list dedo").
-    if len(cleaned) < 20 and not has_history:
-        return True
+    # Any digit → almost certainly a data request: item codes ("31801"),
+    # quantities/lengths ("20 meter"), amounts, invoice/order numbers.
+    # Chit-chat does not carry numbers. Routing such a message to the
+    # tool-less cheap model makes the bot promise to "check" and never check —
+    # the single worst failure mode, so guard it hard.
+    if any(ch.isdigit() for ch in cleaned):
+        return False
 
-    # Check against conversational patterns
+    # Explicit conversational patterns (greetings, acknowledgments, capability
+    # questions like "what is this data?", "tell me about yourself").
     for pattern in _CONVERSATIONAL_PATTERNS:
         if re.search(pattern, cleaned, re.IGNORECASE):
             return True
 
-    # Messages ending with ? but < 50 chars and no data keywords → probably conversational
-    if cleaned.endswith("?") and len(cleaned) < 50:
+    # Very short messages with no data keyword and no digit are likely
+    # chit-chat — but only when there's no prior history. With history, a short
+    # message is probably a follow-up data instruction ("ok go ahead", "unke list dedo").
+    if len(cleaned) < 20 and not has_history:
         return True
 
+    # DEFAULT: route to the full agent. A false "conversational" verdict makes
+    # the assistant say "I'll check" and then stop without querying — much worse
+    # than an occasional unnecessary agent call. When unsure, use the real agent
+    # (it can also answer conversationally — see category A in its system prompt).
     return False
 
 
