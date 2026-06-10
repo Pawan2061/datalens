@@ -306,6 +306,44 @@ def _build_success(
                 numeric_totals[col] = round(sum(vals), 2)
                 numeric_maxes[col] = round(max(vals), 2)
 
+    # Categorical breakdown: value-counts per low-cardinality, non-numeric
+    # column (e.g. STATUS) across ALL rows, computed BEFORE the row cap below.
+    # numeric_totals/maxes only summarize numbers; a "how many pending /
+    # rejected / cancelled?" question needs counts per category and would be
+    # wrong whenever the relevant rows fall past LLM_ROW_CAP (e.g. the
+    # UNDER PROCCESS orders that sit late in a 135-row order list). Columns
+    # already summarized numerically, and high-cardinality columns (IDs,
+    # names, dates), are skipped so this stays tiny.
+    CATEGORY_MAX_DISTINCT = 25
+    category_counts: dict[str, dict[str, int]] = {}
+    if rows and isinstance(rows[0], dict):
+        for col in columns:
+            if col in numeric_totals:
+                continue  # numbers are covered by numeric_totals/maxes
+            counts: dict[str, int] = {}
+            skip = False
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                v = row.get(col)
+                if v is None:
+                    continue
+                if not isinstance(v, str):
+                    skip = True  # mixed/non-string column → not categorical
+                    break
+                s = v.strip()
+                if not s:
+                    continue
+                counts[s] = counts.get(s, 0) + 1
+                if len(counts) > CATEGORY_MAX_DISTINCT:
+                    skip = True  # too many distinct values → not a category
+                    break
+            if skip or not counts:
+                continue
+            category_counts[col] = dict(
+                sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            )
+
     # Cap rows + compact each row to keep the ReAct context under budget.
     # ERP responses often embed nested arrays (e.g. LINE_ITEMS_ARRAY) that make
     # a single row worth thousands of tokens. The full untruncated dataset still
@@ -329,6 +367,10 @@ def _build_success(
     # synthesis step sees the true longest piece even when rows are truncated.
     if numeric_maxes:
         payload["numeric_maxes"] = numeric_maxes
+    # Per-category counts (e.g. STATUS) across ALL rows, so the synthesis step
+    # can answer "how many pending / rejected?" correctly even past the row cap.
+    if category_counts:
+        payload["category_counts"] = category_counts
     # When an API tool names its balance column, pre-extract its total so the
     # synthesis LLM has a single unambiguous figure to quote — no column-picking.
     if balance_column and balance_column in numeric_totals:
@@ -339,9 +381,11 @@ def _build_success(
         payload["visible_rows"] = len(visible_rows)
         payload["note"] = (
             f"Showing first {LLM_ROW_CAP} of {total_rows} rows in this tool result "
-            "(nested arrays replaced with counts). Summarize patterns/totals; the "
-            "full dataset is available to the user in the UI. If the user needs a "
-            "specific row not shown here, ask them to narrow their query."
+            "(nested arrays replaced with counts). For counts/totals across ALL rows "
+            "use 'category_counts' (per-status/category counts) and 'numeric_totals' — "
+            "do NOT count only the visible rows. The full dataset is available to the "
+            "user in the UI. If the user needs a specific row not shown here, ask them "
+            "to narrow their query."
         )
     return json.dumps(payload, default=str)
 

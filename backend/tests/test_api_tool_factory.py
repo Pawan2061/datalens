@@ -365,9 +365,43 @@ async def test_large_response_truncated_for_llm(patch_client):
 
     out = json.loads(await tool.coroutine(Q="q"))
     assert out["row_count"] == 250
-    assert len(out["data"]) == 25  # LLM_ROW_CAP
+    assert len(out["data"]) == 50  # LLM_ROW_CAP
     assert out["truncated_for_llm"] is True
     assert "250" in out["note"]
+
+
+@pytest.mark.asyncio
+async def test_category_counts_span_all_rows(patch_client):
+    """Low-cardinality string columns (e.g. STATUS) get full value-counts across
+    ALL rows, even when most rows are truncated past the LLM cap. High-cardinality
+    columns (IDs) are excluded."""
+    rows = (
+        [{"ORDER_NO": str(i), "STATUS": "COMPLETE"} for i in range(60)]
+        + [{"ORDER_NO": "200", "STATUS": "UNDER PROCCESS"}]
+        + [{"ORDER_NO": "201", "STATUS": "UNDER PROCCESS"}]
+        + [{"ORDER_NO": "202", "STATUS": "REJECTED"}]
+    )
+    patch_client([
+        _FakeResponse({"RESULT_CODE": "PASS", "ORDER_DETAILS": rows}),
+    ])
+    tool = create_api_tool({
+        "id": "t1", "name": "T", "enabled": True,
+        "endpoint_url": "https://api.example.com/x",
+        "method": "GET",
+        "input_parameters": [{"name": "Q", "required": True}],
+        "response_path": "ORDER_DETAILS",
+    }, workspace_id="ws1")
+
+    out = json.loads(await tool.coroutine(Q="q"))
+    assert out["row_count"] == 63
+    assert len(out["data"]) == 50  # truncated for the LLM
+    # STATUS breakdown reflects ALL 63 rows, not just the visible 50 — the two
+    # UNDER PROCCESS rows sit past the cap yet are still counted.
+    assert out["category_counts"]["STATUS"] == {
+        "COMPLETE": 60, "UNDER PROCCESS": 2, "REJECTED": 1,
+    }
+    # ORDER_NO is high-cardinality → excluded from category_counts.
+    assert "ORDER_NO" not in out["category_counts"]
 
 
 @pytest.mark.asyncio

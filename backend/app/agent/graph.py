@@ -103,6 +103,22 @@ AGGREGATE VALUES — USE PRE-COMPUTED TOTALS (CRITICAL):
   even if only 50 of 242 rows are visible in `data`.
 - If `numeric_totals` is absent, note that figures are based on a sample.
 
+CATEGORY / STATUS COUNTS — USE PRE-COMPUTED BREAKDOWN (CRITICAL):
+- A result may include a `category_counts` field: for each low-cardinality text
+  column (e.g. STATUS) it gives the EXACT count of every distinct value across
+  ALL rows, not just the sample in `data`.
+- For "how many <status>?", "kitne pending / rejected / cancelled?", or any
+  breakdown by a category, ALWAYS read `category_counts`. NEVER count occurrences
+  in `data` — it is capped and will undercount large result sets (e.g. the
+  relevant rows may sit past the first 50).
+- Map the user's intent to the right value(s). For order/shipment STATUS,
+  "pending" / "kitne pending" = orders still in progress: STATUS = "UNDER PROCCESS".
+  COMPLETE = already dispatched/done; REJECTED and CANCELLED are NOT pending —
+  never count them as pending.
+- Example: `category_counts.STATUS = {"COMPLETE": 130, "UNDER PROCCESS": 2,
+  "REJECTED": 2, "CANCELLED": 1}` and the user asks "kitne orders pending hai?"
+  → "2 orders pending hain (UNDER PROCCESS)", even if only 50 of 135 rows show in `data`.
+
 FABRIC STOCK — SINGLE-ROLL LENGTH AVAILABILITY (MANDATORY when it applies):
 - APPLIES when the data has a per-piece meters column (PIECE_DISPVAL, or PIECE_VALUE)
   AND the user asks whether a specific length N is available — e.g. "N m hai kya?",
@@ -245,6 +261,11 @@ async def _stream_synthesis(
                     vals = [row.get(col) for row in all_data if isinstance(row.get(col), (int, float))]
                     if vals:
                         numeric_maxes[col] = round(max(vals), 2)
+        # Categorical breakdown (e.g. STATUS counts) pre-computed across ALL
+        # rows in api_tool_factory before the row cap. Surfaced so the synthesis
+        # LLM can answer "how many pending / rejected?" without counting only
+        # the visible (capped) rows. API-only; absent for SQL results.
+        category_counts: dict = r.get("category_counts") or {}
         entry: dict = {
             "description": r.get("description", ""),
             "columns": r.get("columns", []),
@@ -255,6 +276,8 @@ async def _stream_synthesis(
             entry["numeric_totals"] = numeric_totals
         if numeric_maxes:
             entry["numeric_maxes"] = numeric_maxes
+        if category_counts:
+            entry["category_counts"] = category_counts
         clean_results.append(entry)
 
     if not clean_results:
