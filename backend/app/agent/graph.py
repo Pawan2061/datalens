@@ -65,32 +65,26 @@ LANGUAGE & TONE — MIRROR THE USER:
   professional tone, short questions → concise answers.
 - Currency symbols, numeric formatting, and JSON keys stay the same in all languages.
 
-CURRENCY & NUMBER FORMATTING (MANDATORY — GET THE MATH RIGHT):
+CURRENCY & NUMBER FORMATTING (MANDATORY):
 - All monetary values in the query results are in INR (full RUPEES — not thousands,
   not lakhs). Always render with ₹, never $ or USD.
-- EXACT UNIT MATH — memorize these (common source of mistakes):
-    • 1 Crore (Cr) = 1,00,00,000 rupees = 10,000,000 rupees (SEVEN zeros, 10⁷)
-    • 1 Lakh  (L)  = 1,00,000    rupees = 100,000    rupees (FIVE  zeros, 10⁵)
-    • 1 Million ≠ 1 Crore. 1 Crore = 10 Million. DO NOT confuse them.
-- FORMULAS (use these exactly — do NOT divide by 1,000,000 for Cr):
-    • crores = rupees / 10,000,000   (round to 2 decimals)
-    • lakhs  = rupees / 100,000      (round to 2 decimals)
-- WORKED EXAMPLES — verify your output against these before emitting:
-    • 88,742,903  → 88,742,903 / 10,000,000 = 8.87 Cr   (NOT 88.74)
-    • 96,382,687  → 96,382,687 / 10,000,000 = 9.64 Cr   (NOT 96.38)
-    • 35,093,154  → 35,093,154 / 10,000,000 = 3.51 Cr   (NOT 35.09)
-    • 11,658,333  → 11,658,333 / 10,000,000 = 1.17 Cr   (NOT 11.66)
-    •  8,86,902   →    886,902 /    100,000 = 8.87 L
-    •    12,500   →                         = ₹12,500   (below 1 L)
-- THRESHOLDS:
-    ≥ 1,00,00,000 (10⁷) → show in Cr with 2 decimals (e.g. ₹8.87 Cr)
-    ≥    1,00,000 (10⁵) → show in L  with 2 decimals (e.g. ₹8.87 L)
-    otherwise           → show full rupee value with Indian commas (₹X,XX,XXX)
-- SELF-CHECK before emitting ANY Cr or L value:
-    1. Identify the raw rupee value from the query result.
-    2. Divide by 10,000,000 (Cr) or 100,000 (L) — count the zeros carefully.
-    3. If your formatted value × 10,000,000 doesn't match the raw value (for Cr),
-       you made an error — redo the math before writing the narrative.
+- PRE-FORMATTED CONVERSIONS — COPY THEM. UNIT MATH BY YOU IS FORBIDDEN:
+  Every number ≥ 1 lakh in the payload (row values, numeric_totals,
+  numeric_maxes, primary_balance_total) is annotated with its EXACT
+  Indian-unit conversion, e.g.
+      "10,20,05,098.13 (= 10.20 Cr)"
+      "8,98,02,574.33 (= 8.98 Cr)"
+      "3,64,627.88 (= 3.65 L)"
+  When writing any such value in Cr or L (narrative, tables, title,
+  key_findings, wrap-up), COPY the conversion inside "(= ...)" verbatim and
+  prefix ₹ for monetary columns. NEVER divide the raw number yourself —
+  self-division has produced 10x errors (₹10.20 Cr misreported as ₹1.02 Cr).
+- Quantity columns (mtrs): the same annotations apply without ₹ — you may
+  write "3.65 L mtrs" or the full "3,64,627.88 mtrs".
+- Numbers WITHOUT an annotation are below 1 L: show them in full with
+  Indian commas (₹X,XXX / X mtrs) — never convert them to Cr/L.
+- Units for reference: 1 Crore (Cr) = 10⁷ rupees, 1 Lakh (L) = 10⁵ rupees,
+  1 Cr = 100 L. The annotations already use these — trust them.
 - Apply this to ALL amounts in the narrative, key_findings, titles, and tables.
 
 TIME PERIOD — ALWAYS STATE IT:
@@ -133,8 +127,9 @@ AGGREGATE VALUES — USE PRE-COMPUTED TOTALS (CRITICAL):
 - ALWAYS use `numeric_totals` values when reporting totals, outstanding amounts, balances,
   or any aggregate figure. NEVER recalculate by summing the rows in `data` — the sample
   may be capped and will produce a WRONG partial total for large result sets.
-- Example: if `numeric_totals.OUTSTANDING_AMOUNT = 2641379` then the total is ₹26.41 L,
-  even if only 50 of 242 rows are visible in `data`.
+- Example: if `numeric_totals.OUTSTANDING_AMOUNT = "26,41,379.00 (= 26.41 L)"` then the
+  total is ₹26.41 L (copied from the annotation), even if only 50 of 242 rows are
+  visible in `data`.
 - If `numeric_totals` is absent, note that figures are based on a sample.
 
 CATEGORY / STATUS COUNTS — USE PRE-COMPUTED BREAKDOWN (CRITICAL):
@@ -292,6 +287,48 @@ CUSTOMER CHAT WRAP-UP (this is a customer-scoped chat — applies on top of all 
 """
 
 
+def _format_inr_units(value: float) -> str | None:
+    """Exact Indian-unit rendering for a large number: '10.20 Cr' / '3.65 L'.
+
+    Returns None below 1 lakh — small values need no unit conversion.
+    """
+    a = abs(value)
+    if a >= 1e7:
+        return f"{value / 1e7:.2f} Cr"
+    if a >= 1e5:
+        return f"{value / 1e5:.2f} L"
+    return None
+
+
+def _indian_commas(value: float) -> str:
+    """Format with Indian digit grouping: 102005098.13 → '10,20,05,098.13'."""
+    sign = "-" if value < 0 else ""
+    int_part, dec_part = f"{abs(value):.2f}".split(".")
+    if len(int_part) > 3:
+        head, tail = int_part[:-3], int_part[-3:]
+        groups = []
+        while len(head) > 2:
+            groups.append(head[-2:])
+            head = head[:-2]
+        if head:
+            groups.append(head)
+        int_part = ",".join(reversed(groups)) + "," + tail
+    return f"{sign}{int_part}.{dec_part}"
+
+
+def _annotate_numeric(value):
+    """Attach the exact Cr/L conversion to large numbers in the synthesis
+    payload — '10,20,05,098.13 (= 10.20 Cr)' — so the LLM copies the unit
+    conversion instead of doing the division itself (LLM digit-counting on
+    8-9 digit numbers produced 10x errors like ₹10.20 Cr → ₹1.02 Cr)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return value
+    units = _format_inr_units(float(value))
+    if units is None:
+        return value
+    return f"{_indian_commas(float(value))} (= {units})"
+
+
 async def _stream_synthesis(
     question: str,
     sub_results: list[dict],
@@ -353,15 +390,28 @@ async def _stream_synthesis(
         entry: dict = {
             "description": r.get("description", ""),
             "columns": r.get("columns", []),
-            "data": all_data[:100],   # cap rows to avoid huge prompts
+            # Cap rows to avoid huge prompts. Annotate large numerics with
+            # their exact Cr/L conversion (copies, not mutations — the raw
+            # rows still feed _build_final_result / charts untouched).
+            "data": [
+                {k: _annotate_numeric(v) for k, v in row.items()}
+                if isinstance(row, dict) else row
+                for row in all_data[:100]
+            ],
             "row_count": r.get("row_count", len(all_data)),
         }
         if numeric_totals:
-            entry["numeric_totals"] = numeric_totals
+            entry["numeric_totals"] = {k: _annotate_numeric(v) for k, v in numeric_totals.items()}
         if numeric_maxes:
-            entry["numeric_maxes"] = numeric_maxes
+            entry["numeric_maxes"] = {k: _annotate_numeric(v) for k, v in numeric_maxes.items()}
         if category_counts:
             entry["category_counts"] = category_counts
+        # Forward the API-computed outstanding total (the prompt's preferred
+        # source for receivables) — previously referenced but never passed.
+        if r.get("primary_balance_total") is not None:
+            entry["primary_balance_total"] = _annotate_numeric(r["primary_balance_total"])
+            if r.get("primary_balance_column"):
+                entry["primary_balance_column"] = r["primary_balance_column"]
         clean_results.append(entry)
 
     if not clean_results:
