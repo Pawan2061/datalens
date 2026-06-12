@@ -46,6 +46,15 @@ export default function ChatInput({ onSend, isLoading, disabled, placeholder, sh
     }
   }, [analysisMode]);
 
+  // Return focus to the input when a response finishes streaming
+  const wasLoading = useRef(false);
+  useEffect(() => {
+    if (wasLoading.current && !isLoading && !disabled && analysisMode === 'quick') {
+      textareaRef.current?.focus();
+    }
+    wasLoading.current = isLoading;
+  }, [isLoading, disabled, analysisMode]);
+
   const handleQuickSubmit = () => {
     const trimmed = input.trim();
     if (!trimmed || isLoading || disabled) return;

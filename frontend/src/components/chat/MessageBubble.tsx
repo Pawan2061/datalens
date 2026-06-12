@@ -12,6 +12,25 @@ function hasExportableData(insight: InsightResult): boolean {
     (insight.charts ?? []).some(c => !['kpi', 'gauge'].includes(c.chart_type) && (c.data?.length ?? 0) > 0);
 }
 
+/**
+ * While a narrative is still streaming, hold back a trailing (incomplete)
+ * markdown table block so half-built tables never render broken. A table
+ * block followed by a non-table line is complete and renders normally.
+ */
+function holdIncompleteTrailingTable(text: string): { visible: string; pendingTable: boolean } {
+  const lines = text.split('\n');
+  let end = lines.length;
+  // Ignore trailing blank lines when locating the last content line
+  while (end > 0 && lines[end - 1].trim() === '') end--;
+  if (end === 0 || !lines[end - 1].trimStart().startsWith('|')) {
+    return { visible: text, pendingTable: false };
+  }
+  // Walk back to the start of the contiguous table block
+  let start = end - 1;
+  while (start > 0 && lines[start - 1].trimStart().startsWith('|')) start--;
+  return { visible: lines.slice(0, start).join('\n'), pendingTable: true };
+}
+
 /** Renders simple markdown bold (**text**) as <strong> tags */
 function renderBoldText(text: string) {
   const parts = text.split(/\*\*(.+?)\*\*/g);
@@ -94,12 +113,19 @@ export default function MessageBubble({ message, onFollowUp, onPushToCanvas, onD
           <ThinkingSteps steps={message.steps} isStreaming={!!message.isStreaming && !message.insightResult} />
         )}
 
-        {/* Streaming narrative — shown while synthesis is generating, hidden once insightResult arrives */}
-        {message.streamingNarrative && !message.insightResult && (
-          <div className="chat-streaming-narrative">
-            <Markdown remarkPlugins={[remarkGfm]}>{message.streamingNarrative}</Markdown>
-          </div>
-        )}
+        {/* Streaming narrative — shown while synthesis is generating, hidden once insightResult arrives.
+            While streaming, an incomplete trailing table is held back (shimmer shown) until fully received. */}
+        {message.streamingNarrative && !message.insightResult && (() => {
+          const { visible, pendingTable } = message.isStreaming
+            ? holdIncompleteTrailingTable(message.streamingNarrative)
+            : { visible: message.streamingNarrative, pendingTable: false };
+          return (
+            <div className="chat-streaming-narrative">
+              <Markdown remarkPlugins={[remarkGfm]}>{visible}</Markdown>
+              {pendingTable && <div className="chat-table-shimmer">Preparing table…</div>}
+            </div>
+          );
+        })()}
 
         {/* Plain text reply (email confirmation, error messages, etc.) */}
         {!message.insightResult && !message.streamingNarrative && message.content && (

@@ -93,6 +93,40 @@ CURRENCY & NUMBER FORMATTING (MANDATORY — GET THE MATH RIGHT):
        you made an error — redo the math before writing the narrative.
 - Apply this to ALL amounts in the narrative, key_findings, titles, and tables.
 
+TIME PERIOD — ALWAYS STATE IT:
+- Every sales / revenue / quantity summary line MUST name the time period it
+  covers: take it from the user's question ("April 2026", "FY 2026-27",
+  "last 3 months: Mar–May 2026") or from date values in the data (MIN/MAX
+  invoice_date columns if present). If no period is identifiable, append
+  "(all available data)".
+- Examples: "April 2026 revenue: ₹12.34 Cr across 1,240 invoices."
+  "Paris collection sales (Apr 2025 – Mar 2026): 12,480 m across 312 invoices."
+
+METERS vs REVENUE — NEVER SUBSTITUTE ONE FOR THE OTHER:
+- If the user asked for sales in meters / quantity ("sales by meters",
+  "kitna meter bika", "qty"), the headline figure MUST come from a quantity
+  column (mtrs / order_qty / total_meters / qty) and be formatted in meters — NEVER
+  a ₹ amount. If the data has no quantity column, say so explicitly instead
+  of substituting revenue.
+- For sales of a collection / product / design / item, lead with the quantity
+  (meters) figure; mention revenue only if the user asked for it or the data
+  was clearly queried for revenue.
+- SELF-CHECK before emitting: a number labeled meters/m must NOT carry ₹ and
+  must NOT come from an amount/revenue column — and vice versa.
+
+PRESENTATION — LABELS & SORTING (apply to every table):
+- Monetary sales figures are labeled "Amount" — header the column "Amount (₹)",
+  NEVER "Revenue" / "Total Revenue". (Display label only — the value is still
+  computed per the revenue rules.)
+- Quantity-in-meters columns are labeled "Mtrs"; in prose write meters as
+  "mtrs" (e.g. "12,480 mtrs").
+- ALWAYS sort table rows before rendering — never emit rows in arbitrary order:
+  • rankings / breakdowns → primary metric DESCENDING
+  • time series → chronological (oldest → newest)
+  • listings (invoices, pieces, orders) → date DESCENDING unless the user
+    asked for a different order
+  If the data arrives unsorted, re-sort it yourself before building the table.
+
 AGGREGATE VALUES — USE PRE-COMPUTED TOTALS (CRITICAL):
 - Each result may include a `numeric_totals` field with the EXACT sum of every numeric
   column across ALL rows in the dataset (not just the sample in `data`).
@@ -155,6 +189,25 @@ OUTSTANDING / BALANCE COLUMN SELECTION (apply when reporting receivables):
 - The difference between the two is partial payments already received.
 - NEVER add up individual row values to compute the outstanding total — partial rows give wrong sums.
 
+ANSWER BREVITY — ONE-LINER QUESTIONS (overrides DATA-FIRST Step 2):
+- If the user asked ONLY for the outstanding/overdue/balance amount ("what's my
+  outstanding?", "kitna baki hai?", "mera outstanding kitna hai?") WITHOUT asking for a
+  list / details / breakdown / invoice-wise / "kaunse invoice":
+  → Respond with the ONE summary line only (use primary_balance_total). NO table.
+  → Set "display": "answer_only" in the metadata JSON.
+- If the user asked a yes/no question (dispatched? / bhej diya? / available hai? /
+  "N m hai kya?"):
+  → Open with the one-line verdict answer. Add a table ONLY if multiple matching
+    items/orders make it genuinely necessary, or the user asked for details.
+  → If no table follows, set "display": "answer_only".
+- Render the detailed table when the user explicitly asks for details / list /
+  breakup / invoice-wise — then use "display": "full".
+
+FABRIC ITEM NAMING:
+- Identify fabric items as "<Collection> <Sr. No.>" (e.g. "Cuban 12") in prose and tables.
+- The serial column header is "Sr. No." — NEVER "Item No." / "ITEM_NO". Rename it in
+  output tables.
+
 LISTING / TABULAR REQUESTS — WHEN USER SAYS "LIST", "SHOW", "DISPLAY", "DIKHA", "BATAO":
 - If the user explicitly asked to list, show, or display records, output a markdown table
   using the rows in `data`. Do NOT replace a listing request with a prose summary.
@@ -175,14 +228,18 @@ PART 1 — NARRATIVE (markdown):
 DATA-FIRST FORMAT — follow this order strictly for every response with data:
 
 Step 1 — ONE summary line only.
-  Write a single short sentence with the key total / metric. Use numeric_totals for accuracy.
+  Write a single short sentence with the key total / metric AND the time period
+  it covers (per TIME PERIOD rule). Use numeric_totals for accuracy.
   Apply INR formatting rules. Examples:
     "Total outstanding: ₹68.13 L across 248 invoices."
     "April 2026 revenue: ₹12.34 Cr across 1,240 invoices."
-    "Paris collection: 342.5 m across 18 pieces."
+    "Paris collection sales (Apr 2025 – Mar 2026): 12,480 m across 312 invoices."
+    "Paris collection stock: 342.5 m across 18 pieces."
   DO NOT write paragraphs, executive summaries, or analytical prose. One line only.
 
 Step 2 — MARKDOWN TABLE of the data (immediately after the summary line).
+  SKIP this step entirely when the ANSWER BREVITY rule above applies (bare
+  outstanding-amount or yes/no questions) — the summary line IS the answer.
   • Render ALL visible rows from `data` as a markdown table.
   • Choose the most useful columns: invoice number, date, customer, amount, status, etc.
   • Apply INR formatting to all monetary values in the table cells.
@@ -203,12 +260,35 @@ PART 2 — JSON (after separator, no markdown fences):
 {
   "title": "Short descriptive title (e.g. 'Outstanding Invoices — Floor & Furnishing India')",
   "key_findings": [],
-  "follow_up_questions": ["Specific drill-down question?"]
+  "follow_up_questions": ["Specific drill-down question?"],
+  "display": "full"
 }
 
 Rules: key_findings should be empty array [] for data/tabular responses. 1-2 follow-up questions max.
+"display" is "answer_only" when the narrative is intentionally a one-liner without a
+table (per ANSWER BREVITY) — this hides chart/table cards in the UI. Otherwise "full".
 Every number must come from the data.
 Output ONLY the narrative, then the separator, then the JSON. No preamble.
+"""
+
+# Appended to the synthesis prompt ONLY for customer-scoped chats. Admin chats
+# keep the strict data-only format unchanged.
+_CUSTOMER_SUMMARY_ADDENDUM = """
+
+CUSTOMER CHAT WRAP-UP (this is a customer-scoped chat — applies on top of all rules above):
+- AFTER the table(s), add ONE crisp, friendly wrap-up of 1-2 short sentences in
+  PART 1, summarizing what the result means for the customer, in the user's
+  language (Hinglish → Hinglish). This is the ONLY exception to the
+  "STOP after the table(s)" rule.
+- Conversational but strictly factual — restate the headline insight simply
+  (e.g. "Aapka total outstanding ₹2.93 L hai, jismein sabse purana invoice
+  March 2026 ka hai." or "In short, your Paris collection sold 12,480 mtrs
+  this FY — your highest-moving collection."). Every number must come from
+  the data.
+- Maximum 2 sentences. No recommendations, no marketing tone, no follow-up
+  questions, no emojis.
+- For one-liner answers (ANSWER BREVITY), add at most ONE extra conversational
+  sentence after the answer line — the answer line itself stays first.
 """
 
 
@@ -217,12 +297,16 @@ async def _stream_synthesis(
     sub_results: list[dict],
     queue: asyncio.Queue | None,
     plan: dict | None = None,
+    customer_scoped: bool = False,
 ) -> dict | None:
     """Stream synthesis narrative tokens as SSE events, return full synthesis dict.
 
     Tokens before ===METADATA=== are emitted as narrative_chunk events so the
     frontend can display the narrative word-by-word while the LLM generates it.
     After the separator, the JSON metadata is collected silently.
+
+    ``customer_scoped`` appends the conversational wrap-up addendum for
+    customer-view chats; admin chats keep the strict data-only format.
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -298,8 +382,11 @@ async def _stream_synthesis(
 
     try:
         llm = get_synthesis_llm()
+        system_content = _STREAMING_SYNTHESIS_PROMPT
+        if customer_scoped:
+            system_content += _CUSTOMER_SUMMARY_ADDENDUM
         messages = [
-            SystemMessage(content=_STREAMING_SYNTHESIS_PROMPT),
+            SystemMessage(content=system_content),
             HumanMessage(content=f"User question: {question}\n\nQuery results:\n{results_json}"),
         ]
 
@@ -343,6 +430,7 @@ async def _stream_synthesis(
             "narrative": narrative,
             "key_findings": metadata.get("key_findings", []),
             "follow_up_questions": metadata.get("follow_up_questions", []),
+            "display": metadata.get("display", "full"),
         }
 
     except Exception as exc:
@@ -965,7 +1053,8 @@ async def run_agent(
         try:
             with timer.step("synthesis"):
                 synthesis_output = await _stream_synthesis(
-                    question, all_sub_results, queue, plan=plan
+                    question, all_sub_results, queue, plan=plan,
+                    customer_scoped=bool(customer_scope),
                 )
         except Exception:
             pass  # Synthesis failure → heuristic fallback in _build_final_result
@@ -1239,9 +1328,13 @@ def _build_final_result(
         ))
 
     # ── Charts: prefer agent's recommend_charts_tool output ──────────
+    # When synthesis deliberately answered with a one-liner (bare outstanding
+    # amount, yes/no verdicts), suppress chart/table cards entirely — the
+    # narrative line IS the answer. Absent/unknown values fall back to "full".
+    answer_only = bool(synthesis and synthesis.get("display") == "answer_only")
     valid_chart_types = {ct.value for ct in ChartType}
     charts: list[ChartRecommendation] = []
-    if agent_charts:
+    if agent_charts and not answer_only:
         for ac in agent_charts:
             try:
                 ct = ac.get("chart_type", "table")
@@ -1257,7 +1350,9 @@ def _build_final_result(
                 ))
             except Exception:
                 continue
-    if not charts:
+    if answer_only:
+        charts = []
+    elif not charts:
         # Fallback to heuristic chart recommender (already applies merge internally)
         charts = heuristic_charts(sub_query_results)
     else:
@@ -1282,7 +1377,7 @@ def _build_final_result(
             data=r.data,
         )
         for r in sub_query_results
-        if r.data and r.description not in charted_descriptions
+        if r.data and r.description not in charted_descriptions and not answer_only
     ]
 
     total_rows = sum(r.row_count for r in sub_query_results)
