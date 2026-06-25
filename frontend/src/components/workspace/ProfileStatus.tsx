@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Brain, RefreshCw, AlertCircle, Loader2 } from 'lucide-react';
+import { Brain, AlertCircle, Loader2 } from 'lucide-react';
 import {
   generateProfile,
   getProfileStatus,
   createProfileEventSource,
-  deleteProfile,
 } from '../../services/api';
 import ProfileViewer from './ProfileViewer';
 
@@ -154,14 +153,6 @@ export default function ProfileStatus({
     }
   }, [workspaceId, connectionId, startPolling]);
 
-  const handleRefresh = useCallback(async () => {
-    try {
-      await deleteProfile(workspaceId, connectionId);
-    } catch { /* ignore */ }
-    checkedRef.current = ''; // Reset so it re-checks
-    triggerGenerate();
-  }, [workspaceId, connectionId, triggerGenerate]);
-
   if (connectionId === 'mock' || status === 'checking') {
     return null;
   }
@@ -205,15 +196,6 @@ export default function ProfileStatus({
               <span className="profile-status-text">Data profiled</span>
             </button>
           )}
-          {!readOnly && (
-            <button
-              className="profile-status-refresh"
-              onClick={handleRefresh}
-              title="Re-analyze data"
-            >
-              <RefreshCw size={12} />
-            </button>
-          )}
         </>
       )}
 
@@ -223,15 +205,6 @@ export default function ProfileStatus({
           <span className="profile-status-text" title={error}>
             Profile failed
           </span>
-          {!readOnly && (
-            <button
-              className="profile-status-refresh"
-              onClick={handleRefresh}
-              title="Retry"
-            >
-              <RefreshCw size={12} />
-            </button>
-          )}
         </>
       )}
 
