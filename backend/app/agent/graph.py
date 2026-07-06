@@ -412,6 +412,8 @@ async def _stream_synthesis(
             entry["primary_balance_total"] = _annotate_numeric(r["primary_balance_total"])
             if r.get("primary_balance_column"):
                 entry["primary_balance_column"] = r["primary_balance_column"]
+        if r.get("api_gemma_summary"):
+            entry["api_gemma_summary"] = r["api_gemma_summary"]
         clean_results.append(entry)
 
     if not clean_results:
@@ -1183,6 +1185,12 @@ async def run_agent(
         _customer_scope_ctx.reset(_scope_token)
         _customer_scope_field_ctx.reset(_scope_field_token)
 
+    # Optional local post-processing: after the reliable main agent has already
+    # called API tools, let Gemma summarize/compress the API payload. Failure or
+    # timeout does not affect the existing synthesis path.
+    if all_sub_results:
+        await _process_api_results_with_ollama(question, all_sub_results, queue)
+
     # ── Streaming synthesis (runs after the agent finishes all SQL) ──
     # analyze_results is no longer an agent tool — synthesis runs here so
     # we can stream the narrative token-by-token before the final result.
@@ -1713,7 +1721,7 @@ async def _try_ollama_api_tool_path(
     API tools, never SQL/schema tools. Any error or no-tool outcome returns
     None so the existing agent path runs unchanged.
     """
-    if not settings.api_tools_ollama_enabled:
+    if not settings.api_tools_ollama_enabled or not settings.api_tools_ollama_router_enabled:
         return None
     if not dynamic_api_tools:
         await _emit(queue, AgentEventType.thinking, {
@@ -1853,6 +1861,89 @@ async def _try_ollama_api_tool_path(
             exc_info=True,
         )
         return None
+
+
+async def _process_api_results_with_ollama(
+    question: str,
+    sub_results: list[dict],
+    queue: asyncio.Queue | None,
+) -> None:
+    """Optionally summarize API tool results with local Gemma.
+
+    This runs after the main agent has already selected and called API tools.
+    It never replaces raw rows, totals, or chart/table data; it only attaches a
+    short helper summary that the normal synthesis LLM may use.
+    """
+    if (
+        not settings.api_tools_ollama_enabled
+        or not settings.api_tools_ollama_process_results_enabled
+    ):
+        return
+
+    api_results = [
+        r for r in sub_results
+        if str(r.get("sql", "")).startswith("[API Call:")
+        and not r.get("error")
+    ]
+    if not api_results:
+        return
+
+    try:
+        from app.llm.openai_llm import get_api_tools_ollama_llm
+        import logging
+
+        logger = logging.getLogger(__name__)
+        await _emit(queue, AgentEventType.thinking, {
+            "step": "api_result_processing",
+            "content": "Processing API results with local Gemma...",
+        })
+
+        compact_results = []
+        for r in api_results:
+            compact_results.append({
+                "description": r.get("description", ""),
+                "api_name": r.get("api_name", ""),
+                "row_count": r.get("row_count", 0),
+                "columns": r.get("columns", []),
+                "numeric_totals": r.get("numeric_totals", {}),
+                "numeric_maxes": r.get("numeric_maxes", {}),
+                "category_counts": r.get("category_counts", {}),
+                "primary_balance_total": r.get("primary_balance_total"),
+                "primary_balance_column": r.get("primary_balance_column", ""),
+                "sample_rows": r.get("data", [])[:25],
+            })
+
+        prompt = (
+            "Summarize these API tool results for a data analyst. "
+            "Focus on exact totals, counts, statuses, and rows relevant to the user's question. "
+            "Do not invent numbers. Keep it concise.\n\n"
+            f"User question: {question}\n\n"
+            f"API results JSON:\n{json.dumps(compact_results, default=str)}"
+        )
+
+        llm = get_api_tools_ollama_llm()
+        response = await asyncio.wait_for(
+            llm.ainvoke([
+                SystemMessage(content="You summarize API results. Return concise plain text only."),
+                HumanMessage(content=prompt),
+            ]),
+            timeout=settings.api_tools_ollama_processing_timeout_seconds,
+        )
+        summary = getattr(response, "content", "")
+        if isinstance(summary, list):
+            summary = " ".join(str(part) for part in summary)
+        summary = str(summary).strip()
+        if not summary:
+            return
+
+        api_results[0]["api_gemma_summary"] = summary[:4000]
+        logger.info("[api-tool-ollama] processed %d API result(s)", len(api_results))
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "[api-tool-ollama] API result processing skipped: %s", exc,
+            exc_info=True,
+        )
 
 
 async def _emit(
