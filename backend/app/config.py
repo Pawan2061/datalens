@@ -57,6 +57,14 @@ class Settings(BaseSettings):
     google_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
 
+    # Experimental: route only dynamic workspace API-tool selection through
+    # a local Ollama model. Disabled by default; the main agent provider above
+    # remains responsible for SQL/schema/chart orchestration.
+    api_tools_ollama_enabled: bool = False
+    api_tools_ollama_base_url: str = "http://127.0.0.1:11434/v1"
+    api_tools_ollama_model: str = "gemma4:e4b"
+    api_tools_ollama_timeout_seconds: int = 90
+
     # Schema cache TTL in seconds
     schema_cache_ttl: int = 3600  # 1 hour (was 10 min — schemas rarely change)
 

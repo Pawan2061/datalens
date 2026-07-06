@@ -639,11 +639,23 @@ async def run_agent(
             except Exception:
                 return []  # API tools are optional — don't block analysis
 
+        async def _load_schema_optional() -> str:
+            try:
+                return await schema_cache.get(connection_id)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "[agent] schema load failed for connection=%s; continuing without schema: %s",
+                    connection_id, exc,
+                    exc_info=True,
+                )
+                return ""
+
         with timer.step("schema_profile_load"):
             profile_doc, api_tool_configs, schema_text = await asyncio.gather(
                 load_profile(workspace_id, connection_id),
                 _load_api_tools(),
-                schema_cache.get(connection_id),  # Speculative — free when cached
+                _load_schema_optional(),  # Speculative — free when cached
             )
         if profile_doc and profile_doc.status == "ready" and profile_doc.profile_text:
             profile_text = profile_doc.profile_text
@@ -682,19 +694,21 @@ async def run_agent(
 
     plan_addendum = ""
     plan: dict | None = None
-    try:
-        from app.agent.pre_planner import pre_plan, format_plan_for_agent
-        schema_for_plan = profile_text or schema_text
-        with timer.step("pre_plan"):
-            plan = await pre_plan(question, schema_for_plan)
-        if plan:
-            plan_addendum = format_plan_for_agent(plan)
-            await _emit(queue, AgentEventType.thinking, {
-                "step": "planning",
-                "content": f"Breaking down into {len(plan.get('sub_questions', []))} sub-questions...",
-            })
-    except Exception:
-        pass  # Pre-planner is optional — if it fails, agent proceeds normally
+    skip_pre_plan = settings.api_tools_ollama_enabled and api_tool_configs and not (profile_text or schema_text)
+    if not skip_pre_plan:
+        try:
+            from app.agent.pre_planner import pre_plan, format_plan_for_agent
+            schema_for_plan = profile_text or schema_text
+            with timer.step("pre_plan"):
+                plan = await pre_plan(question, schema_for_plan)
+            if plan:
+                plan_addendum = format_plan_for_agent(plan)
+                await _emit(queue, AgentEventType.thinking, {
+                    "step": "planning",
+                    "content": f"Breaking down into {len(plan.get('sub_questions', []))} sub-questions...",
+                })
+        except Exception:
+            pass  # Pre-planner is optional — if it fails, agent proceeds normally
 
     # ── Customer scope filter (injected when not admin) ─────────────
     scope_addendum = ""
@@ -761,18 +775,6 @@ async def run_agent(
     dynamic_suffix = scope_addendum + plan_addendum
     agent_prompt = static_prefix + dynamic_suffix
 
-    # Create the ReAct agent graph
-    # Quick mode → Haiku (tool calling). Deep mode → Sonnet (thorough).
-    # Exception: complex plans get Sonnet even in quick mode (Haiku can't handle 3+ step plans)
-    from app.llm.openai_llm import get_agent_llm
-    plan_complexity = plan.get("complexity", "").lower() if plan else ""
-
-    use_strong_model = (
-        analysis_mode == "deep"
-        or plan_complexity in ("complex", "moderate")
-    )
-    llm = get_planner_llm() if use_strong_model else get_agent_llm()
-
     # Build dynamic API tools for this workspace and merge with built-in tools.
     # Forward the scope so customer-slot params auto-fill in customer view.
     dynamic_api_tools = (
@@ -787,6 +789,91 @@ async def run_agent(
     all_tools = ALL_TOOLS + dynamic_api_tools
     # Track dynamic tool names for result handling
     dynamic_tool_names = {t.name for t in dynamic_api_tools}
+
+    api_tool_only = await _try_ollama_api_tool_path(
+        question=question,
+        history=history,
+        dynamic_api_tools=dynamic_api_tools,
+        dynamic_tool_names=dynamic_tool_names,
+        queue=queue,
+    )
+    if api_tool_only:
+        all_sub_results = api_tool_only["sub_results"]
+        total_input_tokens = api_tool_only["input_tokens"]
+        total_output_tokens = api_tool_only["output_tokens"]
+        model_name = api_tool_only["model_name"]
+        synthesis_output = None
+
+        if all_sub_results:
+            try:
+                with timer.step("synthesis"):
+                    synthesis_output = await _stream_synthesis(
+                        question, all_sub_results, queue, plan=plan,
+                        customer_scoped=bool(customer_scope),
+                    )
+            except Exception:
+                pass
+
+        total_duration = (time.perf_counter() - start_time) * 1000
+        with timer.step("build_result"):
+            final_result = _build_final_result(
+                all_sub_results, total_duration,
+                synthesis=synthesis_output,
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                model_name=model_name,
+                step_timings=timer.as_dict(),
+            )
+
+        from app.guardrails.response_guard import scrub_insight_result
+        with timer.step("response_guard"):
+            final_result = scrub_insight_result(final_result)
+        if "execution_metadata" in final_result:
+            final_result["execution_metadata"]["step_timings"] = timer.as_dict()
+
+        response_cache.put(
+            question,
+            connection_id,
+            final_result,
+            customer_scope=customer_scope,
+            analysis_mode=analysis_mode,
+            selected_tables=selected_tables,
+        )
+
+        await _emit(queue, AgentEventType.final_result, final_result)
+
+        if user_id:
+            try:
+                from app.auth.quota import record_usage
+                meta = final_result.get("execution_metadata", {})
+                await record_usage(
+                    user_id=user_id,
+                    total_tokens=meta.get("total_tokens", 0),
+                    cost_usd=meta.get("estimated_cost_usd", 0.0),
+                    questions=1,
+                    input_tokens=meta.get("input_tokens", 0),
+                    output_tokens=meta.get("output_tokens", 0),
+                    cache_read_tokens=meta.get("cache_read_tokens", 0),
+                    cache_creation_tokens=meta.get("cache_creation_tokens", 0),
+                    model_name=meta.get("model_name", ""),
+                )
+            except Exception:
+                pass
+
+        await _emit_done(queue)
+        return final_result
+
+    # Create the ReAct agent graph
+    # Quick mode → Haiku (tool calling). Deep mode → Sonnet (thorough).
+    # Exception: complex plans get Sonnet even in quick mode (Haiku can't handle 3+ step plans)
+    from app.llm.openai_llm import get_agent_llm
+    plan_complexity = plan.get("complexity", "").lower() if plan else ""
+
+    use_strong_model = (
+        analysis_mode == "deep"
+        or plan_complexity in ("complex", "moderate")
+    )
+    llm = get_planner_llm() if use_strong_model else get_agent_llm()
 
     # ── Prompt caching (Anthropic only, feature-flagged) ───────────────
     # When active, we mark the static prefix with cache_control=ephemeral so
@@ -1611,6 +1698,161 @@ def _build_cached_prompt_arg(
         return msgs
 
     return _cached_prompt
+
+
+async def _try_ollama_api_tool_path(
+    question: str,
+    history: list[dict] | None,
+    dynamic_api_tools: list,
+    dynamic_tool_names: set[str],
+    queue: asyncio.Queue | None,
+) -> dict | None:
+    """Try an API-tools-only Ollama pass.
+
+    This is deliberately isolated from the main agent. Gemma sees only dynamic
+    API tools, never SQL/schema tools. Any error or no-tool outcome returns
+    None so the existing agent path runs unchanged.
+    """
+    if not settings.api_tools_ollama_enabled:
+        return None
+    if not dynamic_api_tools:
+        await _emit(queue, AgentEventType.thinking, {
+            "step": "api_tool_router",
+            "content": "No workspace API tools available; using the main agent...",
+        })
+        return None
+
+    try:
+        from app.llm.openai_llm import get_api_tools_ollama_llm
+        import logging
+
+        logger = logging.getLogger(__name__)
+        await _emit(queue, AgentEventType.thinking, {
+            "step": "api_tool_router",
+            "content": "Checking external API tools with local Gemma...",
+        })
+        llm = get_api_tools_ollama_llm()
+        prompt = (
+            "You are an API-tool router for DataLens.\n"
+            "You have access ONLY to external API tools. You do not have access "
+            "to SQL, database schema, charts, or general analysis tools.\n"
+            "If the user's request clearly requires one of the available external "
+            "API tools, call the best matching tool with the required arguments.\n"
+            "If no API tool is clearly relevant, respond exactly: NO_API_TOOL\n"
+            "Do not answer from memory. Do not invent tool arguments."
+        )
+        graph = create_react_agent(
+            model=llm,
+            tools=dynamic_api_tools,
+            prompt=prompt,
+        )
+
+        _role_map = {"user": "human", "assistant": "ai"}
+        conversation: list[tuple[str, str]] = []
+        if history:
+            for h in history[-4:]:
+                role = _role_map.get(h.get("role", ""), "human")
+                conversation.append((role, h.get("content", "")))
+        conversation.append(("human", question))
+
+        sub_results: list[dict] = []
+        input_tokens = 0
+        output_tokens = 0
+        model_name = settings.api_tools_ollama_model
+        final_text = ""
+        pending_events: list[tuple[AgentEventType, dict]] = []
+
+        async for chunk in graph.astream(
+            {"messages": conversation},
+            stream_mode="updates",
+        ):
+            for node_name, node_output in chunk.items():
+                messages = node_output.get("messages", [])
+                if node_name == "agent":
+                    for msg in messages:
+                        if hasattr(msg, "usage_metadata") and msg.usage_metadata:
+                            um = msg.usage_metadata
+                            input_tokens += um.get("input_tokens", 0)
+                            output_tokens += um.get("output_tokens", 0)
+                            if hasattr(msg, "response_metadata"):
+                                model_name = (
+                                    msg.response_metadata.get("model", "")
+                                    or msg.response_metadata.get("model_name", "")
+                                    or model_name
+                                )
+                        text = getattr(msg, "content", "")
+                        if text and isinstance(text, str):
+                            final_text = text.strip()
+                        for tc in getattr(msg, "tool_calls", []):
+                            tc_name = tc.get("name", "")
+                            if tc_name in dynamic_tool_names:
+                                pending_events.append((
+                                    AgentEventType.api_call_start,
+                                    {
+                                        "api_name": tc_name,
+                                        "content": f"Calling external API: {tc_name}...",
+                                    },
+                                ))
+                elif node_name == "tools":
+                    for msg in messages:
+                        if hasattr(msg, "usage_metadata") and msg.usage_metadata:
+                            um = msg.usage_metadata
+                            input_tokens += um.get("input_tokens", 0)
+                            output_tokens += um.get("output_tokens", 0)
+                        tool_name = getattr(msg, "name", "")
+                        if tool_name not in dynamic_tool_names:
+                            continue
+                        content = msg.content if hasattr(msg, "content") else str(msg)
+                        try:
+                            api_result = json.loads(content)
+                        except json.JSONDecodeError:
+                            api_result = {
+                                "error": content,
+                                "data": [],
+                                "columns": [],
+                                "row_count": 0,
+                            }
+                        api_name = api_result.get("api_name", tool_name)
+                        api_result["index"] = len(sub_results)
+                        api_result["description"] = f"API: {api_name}"
+                        api_result["sql"] = f"[API Call: {api_name}]"
+                        sub_results.append(api_result)
+                        pending_events.append((
+                            AgentEventType.api_call_result,
+                            {
+                                "index": api_result["index"],
+                                "api_name": api_name,
+                                "row_count": api_result.get("row_count", 0),
+                                "duration_ms": api_result.get("duration_ms", 0),
+                                "preview": api_result.get("data", [])[:3],
+                                "error": api_result.get("error"),
+                            },
+                        ))
+
+        if not sub_results:
+            if final_text and final_text.strip().upper() != "NO_API_TOOL":
+                logger.info("[api-tool-ollama] no tool call; model text=%r", final_text[:120])
+            return None
+        if all(r.get("error") for r in sub_results):
+            logger.info("[api-tool-ollama] all API tool calls failed; falling back to main agent")
+            return None
+
+        for event_type, data in pending_events:
+            await _emit(queue, event_type, data)
+
+        return {
+            "sub_results": sub_results,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "model_name": model_name,
+        }
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "[api-tool-ollama] falling back to main agent: %s", exc,
+            exc_info=True,
+        )
+        return None
 
 
 async def _emit(

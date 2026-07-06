@@ -226,6 +226,7 @@ See [`backend/.env.example`](backend/.env.example) for the full list. Key variab
 | `LLM_PROVIDER` | Yes | `anthropic`, `azure`, `openai`, or `mock` |
 | `ANTHROPIC_FOUNDRY_KEY` | If anthropic | Azure AI Foundry key for Claude |
 | `GOOGLE_API_KEY` | Recommended | Gemini Flash — used for guardrails + quick mode |
+| `API_TOOLS_OLLAMA_ENABLED` | Optional | Experimental API-tools-only Gemma/Ollama pre-pass; default `false` |
 | `COSMOS_ENDPOINT` | Yes | Azure Cosmos DB endpoint |
 | `COSMOS_KEY` | Yes | Cosmos DB primary key |
 | `JWT_SECRET` | Yes | Secret for JWT signing — change in production! |

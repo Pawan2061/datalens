@@ -111,6 +111,21 @@ def get_synthesis_llm():
     return get_agent_llm()
 
 
+# ── 2c. Experimental API-tools-only LLM — local Ollama ─────────────
+# Used only by the guarded API-tool pre-pass when explicitly enabled.
+
+@lru_cache(maxsize=1)
+def get_api_tools_ollama_llm():
+    """Local Ollama model for API-tool-only experiments. Singleton."""
+    return ChatOpenAI(
+        model=settings.api_tools_ollama_model,
+        api_key="ollama",
+        base_url=settings.api_tools_ollama_base_url,
+        temperature=0,
+        timeout=settings.api_tools_ollama_timeout_seconds,
+    )
+
+
 # ── 3. Deep analysis LLM — Sonnet ────────────────────────────────
 # Only used for deep analysis mode (thorough, multi-step reasoning).
 

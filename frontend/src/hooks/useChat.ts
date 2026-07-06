@@ -134,6 +134,8 @@ export function useChat(workspaceId?: string) {
 
       // ── Backend mode ──
       let requestFailed = false;
+      let streamFinished = false;
+      let backendErrored = false;
       try {
         if (eventSourceRef.current) {
           eventSourceRef.current.close();
@@ -245,7 +247,12 @@ export function useChat(workspaceId?: string) {
             // fallback
           }
         });
-        es.addEventListener('error', handleEvent('error'));
+        es.addEventListener('error', (event: MessageEvent) => {
+          backendErrored = true;
+          handleEvent('error')(event);
+          setMessageStreaming(currentSessionId, assistantMessageId, false);
+          setIsLoading(false);
+        });
 
         es.addEventListener('final_result', (event: MessageEvent) => {
           try {
@@ -262,6 +269,7 @@ export function useChat(workspaceId?: string) {
         });
 
         es.addEventListener('done', () => {
+          streamFinished = true;
           setMessageStreaming(currentSessionId, assistantMessageId, false);
           setIsLoading(false);
           es.close();
@@ -275,7 +283,7 @@ export function useChat(workspaceId?: string) {
         });
 
         es.onerror = () => {
-          if (requestFailed) {
+          if (requestFailed || streamFinished || backendErrored) {
             return;
           }
           addStep(currentSessionId, assistantMessageId, {

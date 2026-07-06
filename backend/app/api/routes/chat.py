@@ -236,6 +236,11 @@ async def _run_langgraph_pipeline(
         )
 
     except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(
+            "LangGraph pipeline failed for session=%s", session_id,
+            exc_info=True,
+        )
         raw = str(e)
         friendly = (
             "Something went wrong while analyzing your question. "
@@ -577,7 +582,15 @@ async def chat_stream(session_id: str, token: str = ""):
     async def event_generator():
         try:
             while True:
-                event = await queue.get()
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield {"event": "thinking", "data": json.dumps({
+                        "step": "heartbeat",
+                        "content": "Still working...",
+                    })}
+                    continue
+
                 if event is None:
                     yield {"event": "done", "data": json.dumps({"status": "complete"})}
                     break
