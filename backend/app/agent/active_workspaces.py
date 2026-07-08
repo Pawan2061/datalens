@@ -16,6 +16,8 @@ class WarmTarget:
     workspace_id: str
     connection_id: str
     analysis_mode: str
+    customer_scope: str = ""
+    customer_scope_name: str = ""
 
 
 # key -> last-activity monotonic timestamp
@@ -26,11 +28,21 @@ def record(
     workspace_id: str,
     connection_id: str,
     analysis_mode: str,
+    customer_scope: str = "",
+    customer_scope_name: str = "",
 ) -> None:
     """Note that a real request just started for this tuple. No I/O, no await."""
     if not (workspace_id and connection_id):
         return
-    _activity[WarmTarget(workspace_id, connection_id, analysis_mode or "quick")] = time.monotonic()
+    _activity[
+        WarmTarget(
+            workspace_id,
+            connection_id,
+            analysis_mode or "quick",
+            customer_scope or "",
+            customer_scope_name or "",
+        )
+    ] = time.monotonic()
 
 
 def active_targets(window_seconds: float) -> list[WarmTarget]:

@@ -29,8 +29,14 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""          # standard key from console.anthropic.com
     anthropic_foundry_key: str = ""      # Azure AI Foundry key (takes precedence if set)
     anthropic_foundry_url: str = ""      # Azure AI Foundry endpoint (leave blank for direct API)
-    anthropic_planner_model: str = "claude-sonnet-4-5"
+    # Sonnet 5 is cheaper than Sonnet 4.x through 2026-08-31; re-check
+    # pricing before keeping this default past that date.
+    anthropic_planner_model: str = "claude-sonnet-5"
     anthropic_worker_model: str = "claude-haiku-4-5"
+    anthropic_agent_max_tokens: int = 2048
+    anthropic_conversational_max_tokens: int = 700
+    anthropic_synthesis_max_tokens: int = 1400
+    anthropic_planner_max_tokens: int = 4096
     # Prompt caching: cache the static prefix (rules + workspace profile + API
     # tool descriptions) so subsequent turns in a session pay only 0.1x for
     # those tokens. Only active when llm_provider == "anthropic".
@@ -70,6 +76,8 @@ class Settings(BaseSettings):
 
     # Schema cache TTL in seconds
     schema_cache_ttl: int = 3600  # 1 hour (was 10 min — schemas rarely change)
+    response_cache_ttl_seconds: int = 3600
+    response_cache_max_size: int = 200
 
     # Auth / Admin
     jwt_secret: str = "CHANGE-ME-in-production"  # override via JWT_SECRET env var

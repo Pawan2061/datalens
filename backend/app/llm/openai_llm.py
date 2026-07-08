@@ -35,7 +35,7 @@ def get_agent_llm():
             api_key=key,
             base_url=settings.anthropic_foundry_url or None,
             temperature=0,
-            max_tokens=8192,
+            max_tokens=settings.anthropic_agent_max_tokens,
         )
     if settings.llm_provider == "azure":
         return AzureChatOpenAI(
@@ -52,9 +52,9 @@ def get_agent_llm():
     )
 
 
-# ── 2. Generation LLM — Gemini Flash (FREE) ─────────────────────
-# Used for output-heavy tasks: synthesis, charts, profile, chit-chat.
-# Falls back to Haiku if no Google key.
+# ── 2. Generation LLM — cheap output-heavy model ─────────────────
+# Used for output-heavy tasks: SQL helper, charts, profile, synthesis.
+# Uses Gemini when configured; otherwise Anthropic deployments use capped Haiku.
 # Thinking tokens are explicitly disabled for Gemini 2.5 Flash:
 # thinking adds 2-5 s per call without improving structured JSON output.
 
@@ -79,11 +79,22 @@ def get_generation_llm():
         if "2.5" in settings.gemini_model:
             kwargs["thinking_budget"] = 0
         return ChatGoogleGenerativeAI(**kwargs)
-    # Fallback to Haiku (re-use the same singleton)
+    if settings.llm_provider == "anthropic":
+        _patch_anthropic_env()
+        from langchain_anthropic import ChatAnthropic
+        key = settings.anthropic_foundry_key or settings.anthropic_api_key
+        return ChatAnthropic(
+            model=settings.anthropic_worker_model,
+            api_key=key,
+            base_url=settings.anthropic_foundry_url or None,
+            temperature=0,
+            max_tokens=settings.anthropic_synthesis_max_tokens,
+        )
+    # Fallback to the agent worker.
     return get_agent_llm()
 
 
-# ── 2b. Synthesis LLM — Gemini Flash, capped output ─────────────
+# ── 2b. Synthesis LLM — capped output ────────────────────────────
 # Used by analyze_results (synthesizer) and pre_planner.
 # Same model as get_generation_llm() but capped at 2048 output tokens.
 # Synthesis narratives are typically 500-800 tokens; capping prevents
@@ -108,10 +119,40 @@ def get_synthesis_llm():
         if "2.5" in settings.gemini_model:
             kwargs["thinking_budget"] = 0
         return ChatGoogleGenerativeAI(**kwargs)
+    if settings.llm_provider == "anthropic":
+        _patch_anthropic_env()
+        from langchain_anthropic import ChatAnthropic
+        key = settings.anthropic_foundry_key or settings.anthropic_api_key
+        return ChatAnthropic(
+            model=settings.anthropic_worker_model,
+            api_key=key,
+            base_url=settings.anthropic_foundry_url or None,
+            temperature=0,
+            max_tokens=settings.anthropic_synthesis_max_tokens,
+        )
     return get_agent_llm()
 
 
-# ── 2c. Experimental API-tools-only LLM — local Ollama ─────────────
+# ── 2c. Conversational LLM — cheapest short-output path ─────────────
+
+@lru_cache(maxsize=1)
+def get_conversational_llm():
+    """Cheap short-answer model for chit-chat and capability questions."""
+    if settings.llm_provider == "anthropic":
+        _patch_anthropic_env()
+        from langchain_anthropic import ChatAnthropic
+        key = settings.anthropic_foundry_key or settings.anthropic_api_key
+        return ChatAnthropic(
+            model=settings.anthropic_worker_model,
+            api_key=key,
+            base_url=settings.anthropic_foundry_url or None,
+            temperature=0,
+            max_tokens=settings.anthropic_conversational_max_tokens,
+        )
+    return get_generation_llm()
+
+
+# ── 2d. Experimental API-tools-only LLM — local Ollama ─────────────
 # Used only by the guarded API-tool pre-pass when explicitly enabled.
 
 @lru_cache(maxsize=1)
@@ -141,7 +182,7 @@ def get_planner_llm():
             api_key=key,
             base_url=settings.anthropic_foundry_url or None,
             temperature=0,
-            max_tokens=8192,
+            max_tokens=settings.anthropic_planner_max_tokens,
         )
     if settings.llm_provider == "azure":
         return AzureChatOpenAI(

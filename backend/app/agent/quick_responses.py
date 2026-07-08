@@ -10,6 +10,8 @@ import time
 import re
 from typing import Optional
 
+from app.config import settings
+
 # ── Greeting / small-talk patterns ────────────────────────────────
 _GREETING_PATTERNS = [
     r"^(hi|hello|hey|howdy|hola|greetings|good\s*(morning|afternoon|evening|day))[\s!.,?]*$",
@@ -189,6 +191,12 @@ class ResponseCache:
         self._cache: dict[str, dict] = {}  # hash -> {response, timestamp, hit_count}
         self._max_size = max_size
         self._ttl = ttl_seconds
+        self._hits = 0
+        self._misses = 0
+        self._puts = 0
+        self._skips_empty = 0
+        self._evictions = 0
+        self._expiries = 0
 
     def _normalize(
         self,
@@ -224,12 +232,16 @@ class ResponseCache:
         key = self._normalize(question, connection_id, customer_scope, analysis_mode, selected_tables)
         entry = self._cache.get(key)
         if entry is None:
+            self._misses += 1
             return None
         # Check TTL
         if time.time() - entry["timestamp"] > self._ttl:
             del self._cache[key]
+            self._expiries += 1
+            self._misses += 1
             return None
         entry["hit_count"] += 1
+        self._hits += 1
         return entry["response"]
 
     def put(
@@ -245,6 +257,7 @@ class ResponseCache:
         # Don't cache error responses or empty results
         meta = response.get("execution_metadata", {})
         if meta.get("total_rows", 0) == 0:
+            self._skips_empty += 1
             return
 
         key = self._normalize(question, connection_id, customer_scope, analysis_mode, selected_tables)
@@ -253,22 +266,37 @@ class ResponseCache:
         if len(self._cache) >= self._max_size and key not in self._cache:
             oldest_key = min(self._cache, key=lambda k: self._cache[k]["timestamp"])
             del self._cache[oldest_key]
+            self._evictions += 1
 
         self._cache[key] = {
             "response": response,
             "timestamp": time.time(),
             "hit_count": 0,
         }
+        self._puts += 1
 
     def stats(self) -> dict:
         """Return cache statistics."""
         total_hits = sum(e["hit_count"] for e in self._cache.values())
+        total_lookups = self._hits + self._misses
+        hit_rate = self._hits / total_lookups if total_lookups else 0.0
         return {
             "entries": len(self._cache),
             "max_size": self._max_size,
-            "total_hits": total_hits,
+            "ttl_seconds": self._ttl,
+            "hits": self._hits,
+            "misses": self._misses,
+            "hit_rate": round(hit_rate, 4),
+            "entry_hits": total_hits,
+            "puts": self._puts,
+            "skips_empty": self._skips_empty,
+            "evictions": self._evictions,
+            "expiries": self._expiries,
         }
 
 
 # Global instance
-response_cache = ResponseCache()
+response_cache = ResponseCache(
+    max_size=settings.response_cache_max_size,
+    ttl_seconds=settings.response_cache_ttl_seconds,
+)

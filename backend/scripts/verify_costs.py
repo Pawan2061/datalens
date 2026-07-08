@@ -37,41 +37,15 @@ import pandas as pd
 import psycopg
 import psycopg.rows
 
+from app.llm.pricing import resolve_model_pricing
 
-# ── Corrected pricing table (per 1M tokens) ───────────────────────────
-# Source: https://platform.claude.com/docs/en/about-claude/pricing.
-# Order matters: longer / more specific keys first.
-# Note vs. earlier iterations of this script: Haiku 4.5 is $1/$5 (not the
-# Haiku 3.5 $0.8/$4) and Opus 4.7/4.6/4.5 are $5/$25 (not the older $15/$75).
-_PRICING: list[tuple[str, dict[str, float]]] = [
-    ("claude-sonnet-4-6", {"input": 3.0, "output": 15.0}),
-    ("claude-sonnet-4-5", {"input": 3.0, "output": 15.0}),
-    ("claude-sonnet-4-20250514", {"input": 3.0, "output": 15.0}),
-    ("claude-sonnet-4", {"input": 3.0, "output": 15.0}),
-    ("claude-opus-4-7", {"input": 5.0, "output": 25.0}),
-    ("claude-opus-4-6", {"input": 5.0, "output": 25.0}),
-    ("claude-opus-4-5", {"input": 5.0, "output": 25.0}),
-    ("claude-opus-4-1", {"input": 15.0, "output": 75.0}),
-    ("claude-opus-4-0", {"input": 15.0, "output": 75.0}),
-    ("claude-opus-4", {"input": 15.0, "output": 75.0}),
-    ("claude-haiku-4-5", {"input": 1.0, "output": 5.0}),
-    ("claude-haiku-3-5", {"input": 0.8, "output": 4.0}),
-    ("gpt-4o", {"input": 2.5, "output": 10.0}),
-    ("gpt-4.1-mini", {"input": 0.4, "output": 1.6}),
-    ("gemini-2.0-flash", {"input": 0.0, "output": 0.0}),
-    ("gemini-2.5-flash", {"input": 0.0, "output": 0.0}),
-    ("gemini", {"input": 0.0, "output": 0.0}),
-]
-_FALLBACK_PRICING = {"input": 1.0, "output": 5.0}  # matches production fallback
+
+# Pricing is shared with production runtime via app.llm.pricing.
 
 
 def _resolve_pricing(model_name: str) -> tuple[dict[str, float], bool]:
     """Return (pricing, matched). matched=False means we hit the $1/$5 fallback."""
-    m = (model_name or "").lower()
-    for key, p in _PRICING:
-        if key in m:
-            return p, True
-    return _FALLBACK_PRICING, False
+    return resolve_model_pricing(model_name)
 
 
 def _buggy_cost(row: dict) -> float:

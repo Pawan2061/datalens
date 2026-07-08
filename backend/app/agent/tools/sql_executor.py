@@ -219,3 +219,7 @@ def _cache_sql_result(cache_key: str | None, result: dict) -> None:
     if result.get("row_count", 0) > 1000:
         return
     _sql_result_cache.set(cache_key, result)
+
+
+def sql_result_cache_stats() -> dict:
+    return _sql_result_cache.stats()

@@ -16,3 +16,7 @@ def set_cached_workspace_api_tools(workspace_id: str, tools: list[dict]) -> None
 
 def invalidate_workspace_api_tools_cache(workspace_id: str) -> None:
     _workspace_api_tools_cache.delete(workspace_id)
+
+
+def workspace_api_tools_cache_stats() -> dict:
+    return _workspace_api_tools_cache.stats()

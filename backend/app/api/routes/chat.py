@@ -214,7 +214,13 @@ async def _run_langgraph_pipeline(
     """Run the LangGraph ReAct agent, pushing events to the SSE queue."""
     # Note this workspace/connection/mode as "live" so the cache warmer keeps
     # its prompt prefix hot. Sync, no I/O — chat path latency unchanged.
-    _record_active_workspace(workspace_id, connection_id, analysis_mode)
+    _record_active_workspace(
+        workspace_id,
+        connection_id,
+        analysis_mode,
+        customer_scope,
+        customer_scope_name,
+    )
     try:
         final_result = await run_agent(
             question=question,

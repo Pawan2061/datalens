@@ -16,3 +16,7 @@ def set_cached_user_doc(user_id: str, user_doc: dict) -> None:
 
 def invalidate_cached_user_doc(user_id: str) -> None:
     _user_doc_cache.delete(user_id)
+
+
+def user_doc_cache_stats() -> dict:
+    return _user_doc_cache.stats()

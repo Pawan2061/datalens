@@ -24,6 +24,7 @@ from app.agent.tools import (
 from app.agent.tools.sql_executor import _customer_scope_ctx, _customer_scope_field_ctx
 from app.agent.tools.api_tool_factory import build_workspace_api_tools, describe_api_tools_for_prompt
 from app.llm.openai_llm import get_planner_llm, get_synthesis_llm
+from app.llm.pricing import estimate_token_cost_usd
 
 
 ALL_TOOLS = [
@@ -867,14 +868,12 @@ async def run_agent(
 
     # Create the ReAct agent graph
     # Quick mode → Haiku (tool calling). Deep mode → Sonnet (thorough).
-    # Exception: complex plans get Sonnet even in quick mode (Haiku can't handle 3+ step plans)
+    # Keep moderate quick-mode plans on Haiku for cost control; only complex
+    # plans auto-escalate to Sonnet.
     from app.llm.openai_llm import get_agent_llm
     plan_complexity = plan.get("complexity", "").lower() if plan else ""
 
-    use_strong_model = (
-        analysis_mode == "deep"
-        or plan_complexity in ("complex", "moderate")
-    )
+    use_strong_model = _should_use_strong_model(analysis_mode, plan_complexity)
     llm = get_planner_llm() if use_strong_model else get_agent_llm()
 
     # ── Prompt caching (Anthropic only, feature-flagged) ───────────────
@@ -1708,6 +1707,11 @@ def _build_cached_prompt_arg(
     return _cached_prompt
 
 
+def _should_use_strong_model(analysis_mode: str, plan_complexity: str = "") -> bool:
+    """Route only explicit deep or complex plans to the premium model."""
+    return analysis_mode == "deep" or (plan_complexity or "").lower() == "complex"
+
+
 async def _try_ollama_api_tool_path(
     question: str,
     history: list[dict] | None,
@@ -2045,51 +2049,14 @@ def _estimate_cost(
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
 ) -> float:
-    """Estimate USD cost based on token counts and model.
-
-    ``input_tokens`` from langchain-anthropic is the *true* total
-    (fresh + cache_read + cache_creation), so we subtract the cache portions
-    before applying the 1x input price, then bill cache reads at 0.10x and
-    cache writes at 1.25x. For non-Anthropic providers cache kwargs default
-    to 0, so the formula collapses to fresh × input.
-    """
-    # Pricing per 1M tokens — sourced from
-    # https://platform.claude.com/docs/en/about-claude/pricing.
-    # Order matters: longer/more-specific keys first so e.g. "claude-opus-4-7"
-    # wins over a shorter "claude-opus" prefix.
-    _PRICING = (
-        ("claude-sonnet-4-6", {"input": 3.0, "output": 15.0}),
-        ("claude-sonnet-4-5", {"input": 3.0, "output": 15.0}),
-        ("claude-sonnet-4-20250514", {"input": 3.0, "output": 15.0}),
-        ("claude-sonnet-4", {"input": 3.0, "output": 15.0}),
-        ("claude-opus-4-7", {"input": 5.0, "output": 25.0}),
-        ("claude-opus-4-6", {"input": 5.0, "output": 25.0}),
-        ("claude-opus-4-5", {"input": 5.0, "output": 25.0}),
-        ("claude-opus-4-1", {"input": 15.0, "output": 75.0}),
-        ("claude-opus-4-0", {"input": 15.0, "output": 75.0}),
-        ("claude-opus-4", {"input": 15.0, "output": 75.0}),
-        ("claude-haiku-4-5", {"input": 1.0, "output": 5.0}),
-        ("claude-haiku-3-5", {"input": 0.8, "output": 4.0}),
-        ("gpt-4o", {"input": 2.5, "output": 10.0}),
-        ("gpt-4.1-mini", {"input": 0.4, "output": 1.6}),
-        ("gemini-2.0-flash", {"input": 0.0, "output": 0.0}),
-        ("gemini-2.5-flash", {"input": 0.0, "output": 0.0}),
-        ("gemini", {"input": 0.0, "output": 0.0}),
+    """Estimate USD cost based on token counts and model."""
+    return estimate_token_cost_usd(
+        input_tokens,
+        output_tokens,
+        model_name,
+        cache_read_tokens=cache_read_tokens,
+        cache_creation_tokens=cache_creation_tokens,
     )
-    model_lower = (model_name or "").lower()
-    pricing = next(
-        (p for key, p in _PRICING if key in model_lower),
-        {"input": 1.0, "output": 5.0},
-    )
-
-    fresh_input = max(input_tokens - cache_read_tokens - cache_creation_tokens, 0)
-    cost = (
-        (fresh_input * pricing["input"] / 1_000_000)
-        + (output_tokens * pricing["output"] / 1_000_000)
-        + (cache_creation_tokens * pricing["input"] * 1.25 / 1_000_000)
-        + (cache_read_tokens * pricing["input"] * 0.10 / 1_000_000)
-    )
-    return round(cost, 6)
 
 
 # ── Cheap conversational handler (Haiku) ─────────────────────────
@@ -2106,7 +2073,7 @@ async def _run_cheap_conversational(
     system prompt + ReAct agent loop. Saves ~90% on conversational turns.
     """
     from langchain_core.messages import HumanMessage, SystemMessage
-    from app.llm.openai_llm import get_worker_llm
+    from app.llm.openai_llm import get_conversational_llm
     from app.agent.schema_cache import schema_cache
 
     # Build a tiny schema summary (just table names + column counts)
@@ -2181,6 +2148,6 @@ Never mention raw SQL, table names, or column names — use business language.""
 
     messages.append(HumanMessage(content=question))
 
-    llm = get_worker_llm()  # Haiku — cheapest model
+    llm = get_conversational_llm()  # Haiku — cheapest short-output model
     response = await llm.ainvoke(messages)
     return response.content.strip()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -48,6 +48,136 @@ def _clean_annotated(doc: dict, today_str: str | None = None) -> dict:
     out = _clean(doc)
     out["cost_blocked"] = _is_cost_blocked(doc, today_str)
     return out
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _runtime_cache_stats() -> dict:
+    from app.agent import cache_warmer
+    from app.agent.api_tool_cache import workspace_api_tools_cache_stats
+    from app.agent.quick_responses import response_cache
+    from app.agent.schema_cache import schema_cache
+    from app.agent.tools import api_token_cache
+    from app.agent.tools.sql_executor import sql_result_cache_stats
+    from app.auth.user_doc_cache import user_doc_cache_stats
+
+    return {
+        "response_cache": response_cache.stats(),
+        "schema_cache": schema_cache.stats(),
+        "workspace_api_tools_cache": workspace_api_tools_cache_stats(),
+        "sql_result_cache": sql_result_cache_stats(),
+        "api_token_cache": api_token_cache.stats(),
+        "user_doc_cache": user_doc_cache_stats(),
+        "anthropic_cache_warmer": cache_warmer.stats(),
+    }
+
+
+def _cache_efficiency_summary(
+    usage_logs: list[dict],
+    analytics_events: list[dict],
+    *,
+    days: int,
+    now: datetime | None = None,
+) -> dict:
+    """Build a read-only cache/cost summary from persisted usage rows."""
+    from app.llm.pricing import resolve_model_pricing
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+
+    recent_usage: list[dict] = []
+    for row in usage_logs:
+        ts = _parse_timestamp(row.get("timestamp", ""))
+        if ts and ts >= cutoff:
+            recent_usage.append(row)
+
+    recent_events: list[dict] = []
+    for row in analytics_events:
+        ts = _parse_timestamp(row.get("timestamp", ""))
+        if ts and ts >= cutoff:
+            recent_events.append(row)
+
+    prompt_cache_read_tokens = 0
+    prompt_cache_creation_tokens = 0
+    prompt_cache_read_savings_usd = 0.0
+    prompt_cache_creation_overhead_usd = 0.0
+    total_usage_cost = 0.0
+    total_input_tokens = 0
+    total_output_tokens = 0
+    model_counts: dict[str, int] = {}
+
+    for row in recent_usage:
+        model = row.get("model_name", "") or "unknown"
+        model_counts[model] = model_counts.get(model, 0) + 1
+        pricing, _matched = resolve_model_pricing(model)
+        read_tokens = int(row.get("cache_read_tokens") or 0)
+        create_tokens = int(row.get("cache_creation_tokens") or 0)
+        prompt_cache_read_tokens += read_tokens
+        prompt_cache_creation_tokens += create_tokens
+        prompt_cache_read_savings_usd += read_tokens * pricing["input"] * 0.90 / 1_000_000
+        prompt_cache_creation_overhead_usd += create_tokens * pricing["input"] * 0.25 / 1_000_000
+        total_usage_cost += float(row.get("cost_usd") or 0.0)
+        total_input_tokens += int(row.get("input_tokens") or 0)
+        total_output_tokens += int(row.get("output_tokens") or 0)
+
+    response_cache_hits = sum(1 for row in recent_events if row.get("cached"))
+    total_queries = len(recent_events)
+    non_cached_events = max(total_queries - response_cache_hits, 0)
+    non_cached_cost = sum(float(row.get("cost_usd") or 0.0) for row in recent_events if not row.get("cached"))
+    avg_non_cached_cost = non_cached_cost / non_cached_events if non_cached_events else 0.0
+    estimated_response_cache_cost_avoided = response_cache_hits * avg_non_cached_cost
+
+    prompt_cache_requests = sum(
+        1
+        for row in recent_usage
+        if int(row.get("cache_read_tokens") or 0) > 0
+        or int(row.get("cache_creation_tokens") or 0) > 0
+    )
+    prompt_cache_hit_requests = sum(
+        1 for row in recent_usage if int(row.get("cache_read_tokens") or 0) > 0
+    )
+
+    return {
+        "window_days": days,
+        "usage_rows": len(recent_usage),
+        "analytics_events": total_queries,
+        "response_cache": {
+            "hits": response_cache_hits,
+            "total_queries": total_queries,
+            "hit_rate": round(response_cache_hits / total_queries, 4) if total_queries else 0.0,
+            "estimated_cost_avoided_usd": round(estimated_response_cache_cost_avoided, 6),
+            "avg_non_cached_cost_usd": round(avg_non_cached_cost, 6),
+        },
+        "anthropic_prompt_cache": {
+            "requests_with_cache_tokens": prompt_cache_requests,
+            "requests_with_cache_reads": prompt_cache_hit_requests,
+            "request_hit_rate": round(prompt_cache_hit_requests / len(recent_usage), 4) if recent_usage else 0.0,
+            "cache_read_tokens": prompt_cache_read_tokens,
+            "cache_creation_tokens": prompt_cache_creation_tokens,
+            "read_savings_usd": round(prompt_cache_read_savings_usd, 6),
+            "creation_overhead_usd": round(prompt_cache_creation_overhead_usd, 6),
+            "net_estimated_savings_usd": round(
+                prompt_cache_read_savings_usd - prompt_cache_creation_overhead_usd,
+                6,
+            ),
+        },
+        "llm_usage": {
+            "cost_usd": round(total_usage_cost, 6),
+            "input_tokens": total_input_tokens,
+            "output_tokens": total_output_tokens,
+            "model_counts": dict(sorted(model_counts.items())),
+        },
+    }
 
 
 # ── Create user (admin-driven) ──────────────────────────────────────
@@ -308,6 +438,49 @@ async def admin_stats(admin: dict = Depends(get_admin_or_moderator)):
         "total_cost_today": round(total_cost_today, 4),
         "total_cost_month": round(total_cost_month, 4),
         "recent_signups": recent_signups,
+    }
+
+
+# ── Cache efficiency ─────────────────────────────────────────────────
+
+@router.get("/api/admin/cache-efficiency")
+async def admin_cache_efficiency(
+    days: int = 7,
+    admin: dict = Depends(get_admin_user),
+):
+    """Return persisted and in-memory cache efficiency metrics."""
+    if not insight_db.is_ready:
+        raise HTTPException(status_code=503, detail="Persistence not configured")
+
+    days = max(1, min(int(days or 7), 90))
+
+    try:
+        usage_logs = list(
+            insight_db.container("usage_logs").query_items(
+                query="SELECT * FROM c ORDER BY c.timestamp DESC",
+                enable_cross_partition_query=True,
+            )
+        )
+    except Exception:
+        usage_logs = []
+
+    try:
+        analytics_events = list(
+            insight_db.container("analytics_events").query_items(
+                query="SELECT * FROM c ORDER BY c.timestamp DESC",
+                enable_cross_partition_query=True,
+            )
+        )
+    except Exception:
+        analytics_events = []
+
+    return {
+        "summary": _cache_efficiency_summary(
+            [_clean(row) for row in usage_logs],
+            [_clean(row) for row in analytics_events],
+            days=days,
+        ),
+        "runtime_caches": _runtime_cache_stats(),
     }
 
 

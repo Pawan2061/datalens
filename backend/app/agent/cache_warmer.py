@@ -39,6 +39,15 @@ logger = logging.getLogger(__name__)
 
 _task: asyncio.Task | None = None
 _stop_event: asyncio.Event | None = None
+_stats = {
+    "attempts": 0,
+    "successes": 0,
+    "failures": 0,
+    "skips_no_prefix": 0,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 0,
+    "input_tokens": 0,
+}
 
 
 # Connector labels mirror graph.py so warmer's prefix matches byte-for-byte.
@@ -123,13 +132,10 @@ async def _build_prefix_for(target: WarmTarget) -> str | None:
     )
 
     if api_tool_configs:
-        # Use empty scope — matches admin-mode requests. Users on customer
-        # scope get a different prefix; warming the admin variant still helps
-        # because admin requests are the common case during config/testing.
         system_prompt += describe_api_tools_for_prompt(
             api_tool_configs,
-            customer_scope="",
-            customer_scope_name="",
+            customer_scope=target.customer_scope,
+            customer_scope_name=target.customer_scope_name,
         )
 
     if (len(system_prompt) // 4) < settings.anthropic_prompt_cache_min_tokens:
@@ -139,9 +145,11 @@ async def _build_prefix_for(target: WarmTarget) -> str | None:
 
 async def _warm_one(target: WarmTarget, sem: asyncio.Semaphore) -> None:
     async with sem:
+        _stats["attempts"] += 1
         try:
             prefix = await _build_prefix_for(target)
             if not prefix:
+                _stats["skips_no_prefix"] += 1
                 return
             llm = _warmer_llm()
             messages = [
@@ -170,15 +178,21 @@ async def _warm_one(target: WarmTarget, sem: asyncio.Semaphore) -> None:
                 + (details.get("ephemeral_1h_input_tokens") or 0)
             )
             logger.info(
-                "[cache-warmer] ws=%s conn=%s mode=%s read=%d create=%d input=%d",
+                "[cache-warmer] ws=%s conn=%s mode=%s scope=%s read=%d create=%d input=%d",
                 target.workspace_id,
                 target.connection_id,
                 target.analysis_mode,
+                target.customer_scope or "admin",
                 details.get("cache_read", 0) or 0,
                 cache_create,
                 um.get("input_tokens", 0),
             )
+            _stats["successes"] += 1
+            _stats["cache_read_tokens"] += details.get("cache_read", 0) or 0
+            _stats["cache_creation_tokens"] += cache_create
+            _stats["input_tokens"] += um.get("input_tokens", 0) or 0
         except Exception as exc:
+            _stats["failures"] += 1
             logger.warning(
                 "[cache-warmer] failed ws=%s conn=%s: %s",
                 target.workspace_id,
@@ -244,3 +258,15 @@ async def stop() -> None:
             _task.cancel()
     _task = None
     _stop_event = None
+
+
+def stats() -> dict:
+    running = bool(_task and not _task.done())
+    return {
+        **_stats,
+        "enabled": settings.anthropic_cache_warming_enabled,
+        "running": running,
+        "interval_seconds": settings.anthropic_cache_warming_interval_seconds,
+        "active_window_seconds": settings.anthropic_cache_warming_active_window_seconds,
+        "max_concurrent": settings.anthropic_cache_warming_max_concurrent,
+    }

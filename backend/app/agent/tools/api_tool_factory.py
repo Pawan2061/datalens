@@ -701,15 +701,14 @@ def describe_api_tools_for_prompt(
     customer_scope: str = "",
     customer_scope_name: str = "",
 ) -> str:
-    """Generate a prompt section describing available API tools for the LLM."""
+    """Generate a compact prompt section describing available API tools."""
     enabled = [c for c in api_tool_configs if c.get("enabled", True)]
     if not enabled:
         return ""
 
     lines = [
         "\nEXTERNAL API TOOLS:",
-        "You have access to these external APIs in addition to the database.",
-        "Use them when the user asks about real-time/live data NOT stored in the database.\n",
+        "Use these only for live/external data not available in the database.\n",
     ]
 
     for cfg in enabled:
@@ -718,46 +717,53 @@ def describe_api_tools_for_prompt(
         params = cfg.get("input_parameters", [])
         resp_fields = cfg.get("response_fields", [])
 
-        lines.append(f"Tool: {tool_name}")
-        lines.append(f"  Description: {desc}")
+        line = f"- {tool_name}"
+        if desc:
+            line += f": {_compact_prompt_text(desc, 180)}"
+        lines.append(line)
         if params:
             param_strs = []
             for p in params:
                 is_scoped = bool(customer_scope) and _is_customer_scope_param(p.get("name", ""))
                 req = (
-                    "auto-filled from customer scope"
+                    "auto"
                     if is_scoped
-                    else ("required" if p.get("required", True) else "optional")
+                    else ("req" if p.get("required", True) else "opt")
                 )
-                param_strs.append(f"{p['name']} ({req}, {p.get('type', 'string')}): {p.get('description', '')}")
-            lines.append(f"  Input: {'; '.join(param_strs)}")
+                p_desc = _compact_prompt_text(p.get("description", ""), 80)
+                piece = f"{p['name']}:{p.get('type', 'string')}:{req}"
+                if p_desc:
+                    piece += f" ({p_desc})"
+                param_strs.append(piece)
+            lines.append(f"  params: {'; '.join(param_strs)}")
         if resp_fields:
-            lines.append(f"  Returns fields: {', '.join(resp_fields)}")
-        lines.append("")
+            shown = resp_fields[:20]
+            suffix = f", ...+{len(resp_fields) - len(shown)}" if len(resp_fields) > len(shown) else ""
+            lines.append(f"  returns: {', '.join(shown)}{suffix}")
 
     if customer_scope:
         scope_label = customer_scope_name or customer_scope
         lines.append(
-            f"CUSTOMER SCOPE FOR API TOOLS: Any parameter representing the customer "
-            f"(customer_id, CUSTOMER_CODE, cust_id, etc.) is pre-filled with "
-            f"'{customer_scope}' ({scope_label}). Do NOT ask the user for their "
-            f"customer ID — call the tool directly."
+            f"API customer params are pre-filled with '{customer_scope}' ({scope_label}); "
+            "call directly, do not ask for customer ID."
         )
         lines.append("")
     else:
         lines.append(
-            "ADMIN MODE FOR API TOOLS: No customer filter is pre-set. If the user asks "
-            "a 'my/our'-style question without naming a customer, ask which customer "
-            "(or which subset) they want — do NOT guess. For clearly scoped admin "
-            "questions naming a specific customer, pass that customer's ID explicitly."
+            "Admin API mode: if a customer-param tool is needed and the user did not "
+            "name a customer/subset, ask for it; do not guess."
         )
         lines.append("")
 
-    lines.append("ROUTING DECISION:")
-    lines.append("- If the question can be answered from the database schema above → use execute_sql")
-    lines.append("- If the question requires live/real-time data from external systems → use the appropriate API tool")
-    lines.append("- You may combine both: query the DB for context, then call an API for live details")
-    lines.append("- API tool results can be passed to analyze_results and recommend_charts_tool just like SQL results")
+    lines.append("Routing: database question -> execute_sql; live/external question -> API tool; combine only when needed.")
     lines.append("")
 
     return "\n".join(lines)
+
+
+def _compact_prompt_text(text: str, limit: int) -> str:
+    """One-line truncation for repeated prompt prose."""
+    cleaned = " ".join(str(text or "").split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: max(limit - 3, 0)].rstrip() + "..."
