@@ -6,6 +6,7 @@ interface TextSummaryProps {
   summary: InsightSummary;
   onFollowUp?: (question: string) => void;
   isConversational?: boolean;
+  showRecommendations?: boolean;
 }
 
 const SIG_COLORS: Record<string, { border: string; bg: string; badgeBg: string; badgeColor: string }> = {
@@ -14,7 +15,7 @@ const SIG_COLORS: Record<string, { border: string; bg: string; badgeBg: string; 
   low:    { border: '#94a3b8', bg: 'rgba(148,163,184,0.06)', badgeBg: '#f1f5f9', badgeColor: '#64748b' },
 };
 
-export default function TextSummary({ summary, onFollowUp, isConversational }: TextSummaryProps) {
+export default function TextSummary({ summary, onFollowUp, isConversational, showRecommendations = false }: TextSummaryProps) {
   // Auto-detect conversational mode when there's no analysis metadata
   const isWelcome = isConversational ?? (
     summary.key_findings?.length > 0 &&
@@ -77,11 +78,11 @@ export default function TextSummary({ summary, onFollowUp, isConversational }: T
         </div>
       )}
 
-      {/* Follow-up Questions — TEMP: hidden, flip `false &&` back to restore */}
-      {false && summary.follow_up_questions && summary.follow_up_questions.length > 0 && onFollowUp && (
+      {/* Recommended customer queries */}
+      {showRecommendations && summary.follow_up_questions && summary.follow_up_questions.length > 0 && onFollowUp && (
         <div className="txs-followup">
           <h4 className="txs-followup-header">
-            {isWelcome ? 'Try asking' : 'Explore further'}
+            Recommended queries
           </h4>
           <div className="txs-followup-list">
             {summary.follow_up_questions.map((q, i) => (

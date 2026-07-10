@@ -72,9 +72,10 @@ interface InsightCardProps {
   insight: InsightResult;
   onFollowUp?: (question: string) => void;
   onPushToCanvas?: () => void;
+  showRecommendations?: boolean;
 }
 
-export default function InsightCard({ insight, onFollowUp, onPushToCanvas }: InsightCardProps) {
+export default function InsightCard({ insight, onFollowUp, onPushToCanvas, showRecommendations = false }: InsightCardProps) {
   const [pushed, setPushed] = useState(false);
   const [showTimings, setShowTimings] = useState(false);
   const { summary, charts, tables, execution_metadata } = insight;
@@ -109,6 +110,7 @@ export default function InsightCard({ insight, onFollowUp, onPushToCanvas }: Ins
         summary={summary}
         onFollowUp={onFollowUp}
         isConversational={execution_metadata?.sub_query_count === 0}
+        showRecommendations={showRecommendations}
       />
 
       {/* Charts — responsive grid layout (each chart has its own Data toggle) */}

@@ -46,9 +46,10 @@ interface MessageBubbleProps {
   onDeleteMessage?: (messageId: string) => void;
   onFeedback?: (messageId: string, feedback: 'positive' | 'negative' | null) => void;
   compact?: boolean;
+  showRecommendations?: boolean;
 }
 
-export default function MessageBubble({ message, onFollowUp, onPushToCanvas, onDeleteMessage, onFeedback, compact = false }: MessageBubbleProps) {
+export default function MessageBubble({ message, onFollowUp, onPushToCanvas, onDeleteMessage, onFeedback, compact = false, showRecommendations = false }: MessageBubbleProps) {
   const isUser = message.role === 'user';
 
   if (isUser) {
@@ -146,12 +147,14 @@ export default function MessageBubble({ message, onFollowUp, onPushToCanvas, onD
               isDeep={isDeep}
               onPushToCanvas={onPushToCanvas}
               onFollowUp={onFollowUp}
+              showRecommendations={showRecommendations}
             />
           ) : (
             <InsightCard
               insight={message.insightResult}
               onFollowUp={onFollowUp}
               onPushToCanvas={onPushToCanvas && hasVisuals ? () => onPushToCanvas(message.insightResult!, message.id) : undefined}
+              showRecommendations={showRecommendations}
             />
           );
         })()}
@@ -205,12 +208,14 @@ function CompactInsightPreview({
   isDeep,
   onPushToCanvas,
   onFollowUp,
+  showRecommendations,
 }: {
   insight: InsightResult;
   messageId: string;
   isDeep: boolean;
   onPushToCanvas?: (insight: InsightResult, messageId: string) => void;
   onFollowUp?: (question: string) => void;
+  showRecommendations?: boolean;
 }) {
   const [pushed, setPushed] = useState(false);
   const [expanded, setExpanded] = useState(true);
@@ -293,9 +298,10 @@ function CompactInsightPreview({
         </div>
       )}
 
-      {/* Follow-up suggestions — TEMP: hidden, flip `false &&` back to restore */}
-      {false && expanded && summary.follow_up_questions && summary.follow_up_questions.length > 0 && onFollowUp && (
+      {/* Recommended customer queries */}
+      {showRecommendations && expanded && summary.follow_up_questions && summary.follow_up_questions.length > 0 && onFollowUp && (
         <div className="chat-compact-followups">
+          <div className="chat-compact-followups-label">Recommended queries</div>
           {summary.follow_up_questions.slice(0, 3).map((q, i) => (
             <button key={i} onClick={() => onFollowUp?.(q)} className="chat-compact-followup-btn">
               {q}

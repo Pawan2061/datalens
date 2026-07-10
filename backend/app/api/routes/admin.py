@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from app.api.routes.users import get_admin_user, get_admin_or_moderator
 from app.auth.password import hash_password
@@ -13,6 +15,12 @@ from app.schemas.persistence import AdminUserCreate, AdminUserUpdate
 from app.services import user_management
 
 router = APIRouter()
+
+ANTHROPIC_CHAT_MODELS = ("claude-haiku-4-5", "claude-sonnet-5")
+
+
+class AdminModelSettingsUpdate(BaseModel):
+    anthropic_worker_model: Literal["claude-haiku-4-5", "claude-sonnet-5"]
 
 
 def _is_cost_blocked(doc: dict, today_str: str | None = None) -> bool:
@@ -79,6 +87,14 @@ def _runtime_cache_stats() -> dict:
         "api_token_cache": api_token_cache.stats(),
         "user_doc_cache": user_doc_cache_stats(),
         "anthropic_cache_warmer": cache_warmer.stats(),
+    }
+
+
+def _model_settings_payload() -> dict:
+    return {
+        "llm_provider": settings.llm_provider,
+        "anthropic_worker_model": settings.anthropic_worker_model,
+        "allowed_anthropic_chat_models": list(ANTHROPIC_CHAT_MODELS),
     }
 
 
@@ -178,6 +194,34 @@ def _cache_efficiency_summary(
             "model_counts": dict(sorted(model_counts.items())),
         },
     }
+
+
+# ── Runtime model settings ──────────────────────────────────────────
+
+@router.get("/api/admin/model-settings")
+async def get_model_settings(admin: dict = Depends(get_admin_user)):
+    """Return current runtime LLM model settings for the admin UI."""
+    return _model_settings_payload()
+
+
+@router.put("/api/admin/model-settings")
+async def update_model_settings(
+    body: AdminModelSettingsUpdate,
+    admin: dict = Depends(get_admin_user),
+):
+    """Switch the Anthropic worker/chat model for the current backend process."""
+    if settings.llm_provider != "anthropic":
+        raise HTTPException(
+            status_code=400,
+            detail="Model switching is only available when LLM_PROVIDER=anthropic",
+        )
+
+    settings.anthropic_worker_model = body.anthropic_worker_model
+
+    from app.llm.openai_llm import clear_llm_caches
+
+    clear_llm_caches()
+    return _model_settings_payload()
 
 
 # ── Create user (admin-driven) ──────────────────────────────────────

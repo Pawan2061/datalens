@@ -202,3 +202,13 @@ def get_planner_llm():
 # ── Legacy aliases ────────────────────────────────────────────────
 # These are used by existing code (synthesizer, chart_recommender, profiler)
 get_worker_llm = get_generation_llm  # kept for backward compat
+
+
+def clear_llm_caches() -> None:
+    """Drop singleton LLM clients after runtime model settings change."""
+    get_agent_llm.cache_clear()
+    get_generation_llm.cache_clear()
+    get_synthesis_llm.cache_clear()
+    get_conversational_llm.cache_clear()
+    get_api_tools_ollama_llm.cache_clear()
+    get_planner_llm.cache_clear()

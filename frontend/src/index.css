@@ -4058,6 +4058,15 @@ div[style*="position: relative"] > .cr-view-toggle {
   padding-top: 10px;
   border-top: 1px solid rgba(236,238,242,0.6);
 }
+.chat-compact-followups-label {
+  flex-basis: 100%;
+  font-size: 10px;
+  font-weight: 700;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 2px;
+}
 .chat-compact-followup-btn {
   padding: 5px 10px;
   font-size: 11px;
@@ -5566,11 +5575,61 @@ div[style*="position: relative"] > .cr-view-toggle {
   padding: 24px 32px 0;
   margin-bottom: 24px;
 }
+.adm-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .adm-page-title {
   font-size: 22px;
   font-weight: 800;
   color: #111827;
   letter-spacing: -0.02em;
+}
+.adm-model-switch-compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid #eceef2;
+  border-radius: 8px;
+  background: #fff;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 600;
+}
+.adm-model-switch-compact svg {
+  color: #6366f1;
+}
+.adm-switch {
+  width: 36px;
+  height: 20px;
+  padding: 2px;
+  border: none;
+  border-radius: 999px;
+  background: #d1d5db;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.adm-switch span {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+  transition: transform 0.15s;
+}
+.adm-switch--on {
+  background: #6366f1;
+}
+.adm-switch--on span {
+  transform: translateX(16px);
+}
+.adm-switch:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 /* Loading state */

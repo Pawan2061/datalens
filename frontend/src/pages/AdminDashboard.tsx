@@ -5,7 +5,7 @@ import {
   Settings, Loader2, AlertTriangle, RefreshCw, Plus, UserPlus,
   MessageSquare, ChevronDown, Database, BarChart3,
   Shield, Search, ChevronRight, LayoutDashboard,
-  Building2, UserCog, ScrollText, TrendingUp, LogOut, Plug,
+  Building2, UserCog, ScrollText, TrendingUp, LogOut, Plug, Bot,
 } from 'lucide-react';
 import { useAuthStore, type User } from '../store/authStore';
 import { useWorkspaceStore } from '../store/workspaceStore';
@@ -86,6 +86,12 @@ interface UsageEntry {
   cost_usd: number;
   model_name?: string;
   timestamp: string;
+}
+
+interface ModelSettings {
+  llm_provider: string;
+  anthropic_worker_model: string;
+  allowed_anthropic_chat_models: string[];
 }
 
 function useAdminApi() {
@@ -1017,6 +1023,39 @@ function UsageSection({ usage, loading }: { usage: UsageEntry[]; loading: boolea
   );
 }
 
+function ChatModelSwitch({
+  modelSettings,
+  saving,
+  onChange,
+}: {
+  modelSettings: ModelSettings | null;
+  saving: boolean;
+  onChange: (model: string) => void;
+}) {
+  if (!modelSettings || modelSettings.llm_provider !== 'anthropic') return null;
+
+  const isSonnet = modelSettings.anthropic_worker_model === 'claude-sonnet-5';
+  const nextModel = isSonnet ? 'claude-haiku-4-5' : 'claude-sonnet-5';
+
+  return (
+    <div className="adm-model-switch-compact" title="Switch the model used where Haiku is normally used">
+      <Bot size={14} />
+      <span>Haiku</span>
+      <button
+        type="button"
+        className={`adm-switch ${isSonnet ? 'adm-switch--on' : ''}`}
+        onClick={() => onChange(nextModel)}
+        disabled={saving}
+        aria-label="Switch chat model between Claude Haiku and Claude Sonnet"
+        aria-pressed={isSonnet}
+      >
+        <span />
+      </button>
+      <span>Sonnet</span>
+    </div>
+  );
+}
+
 /* ================================================================
    MAIN: Admin Dashboard
    ================================================================ */
@@ -1048,10 +1087,12 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState<User[]>([]);
   const [workspaces, setWorkspaces] = useState<AdminWorkspace[]>([]);
   const [usage, setUsage] = useState<UsageEntry[]>([]);
+  const [modelSettings, setModelSettings] = useState<ModelSettings | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [usersLoading, setUsersLoading] = useState(true);
   const [wsLoading, setWsLoading] = useState(true);
   const [usageLoading, setUsageLoading] = useState(true);
+  const [modelSaving, setModelSaving] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null);
@@ -1108,10 +1149,16 @@ export default function AdminDashboard() {
     setUsageLoading(false);
   }, [headers, isAdmin]);
 
+  const fetchModelSettings = useCallback(async () => {
+    if (!isAdmin) return;
+    try { const r = await fetch(`${API_BASE}/api/admin/model-settings`, { headers: headers() }); if (r.ok) setModelSettings(await r.json()); } catch {}
+  }, [headers, isAdmin]);
+
   useEffect(() => { fetchWorkspaces(); if (canViewAdminData) { fetchStats(); fetchUsers(); } }, [fetchStats, fetchWorkspaces, fetchUsers, canViewAdminData]);
+  useEffect(() => { fetchModelSettings(); }, [fetchModelSettings]);
   useEffect(() => { if (section === 'usage') fetchUsage(); }, [section, fetchUsage]);
 
-  const refreshAll = () => { fetchStats(); fetchWorkspaces(); fetchUsers(); if (section === 'usage') fetchUsage(); };
+  const refreshAll = () => { fetchStats(); fetchWorkspaces(); fetchUsers(); fetchModelSettings(); if (section === 'usage') fetchUsage(); };
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -1155,6 +1202,27 @@ export default function AdminDashboard() {
       else if (action === 'delete') await fetch(`${API_BASE}/api/admin/users/${userId}`, { method: 'DELETE', headers: headers() });
       await Promise.all([fetchStats(), fetchUsers(), fetchWorkspaces()]);
     } catch {}
+  };
+
+  const handleModelChange = async (model: string) => {
+    setModelSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/model-settings`, {
+        method: 'PUT',
+        headers: headers(),
+        body: JSON.stringify({ anthropic_worker_model: model }),
+      });
+      if (res.ok) {
+        setModelSettings(await res.json());
+        showToast(`Chat model switched to ${model}`);
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Failed to switch model' }));
+        showToast(err.detail || 'Failed to switch model', 'error');
+      }
+    } catch (e) {
+      showToast(`Network error: ${e}`, 'error');
+    }
+    setModelSaving(false);
   };
 
   const sectionTitles: Record<Section, string> = {
@@ -1276,7 +1344,16 @@ export default function AdminDashboard() {
       <main className="adm-main">
         <div className="adm-topbar">
           <h1 className="adm-page-title">{sectionTitles[section]}</h1>
-          <button className="adm-btn adm-btn--secondary" onClick={refreshAll}><RefreshCw size={14} /> Refresh</button>
+          <div className="adm-topbar-actions">
+            {isAdmin && (
+              <ChatModelSwitch
+                modelSettings={modelSettings}
+                saving={modelSaving}
+                onChange={handleModelChange}
+              />
+            )}
+            <button className="adm-btn adm-btn--secondary" onClick={refreshAll}><RefreshCw size={14} /> Refresh</button>
+          </div>
         </div>
 
         <div className="adm-content">

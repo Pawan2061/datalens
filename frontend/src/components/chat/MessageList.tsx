@@ -10,6 +10,7 @@ interface MessageListProps {
   onDeleteMessage?: (messageId: string) => void;
   onFeedback?: (messageId: string, feedback: 'positive' | 'negative' | null) => void;
   compact?: boolean;
+  showRecommendations?: boolean;
 }
 
 function CompactEmptyState() {
@@ -36,7 +37,7 @@ function FullEmptyState() {
   );
 }
 
-export default function MessageList({ messages, onFollowUp, onPushToCanvas, onDeleteMessage, onFeedback, compact = false }: MessageListProps) {
+export default function MessageList({ messages, onFollowUp, onPushToCanvas, onDeleteMessage, onFeedback, compact = false, showRecommendations = false }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -59,6 +60,7 @@ export default function MessageList({ messages, onFollowUp, onPushToCanvas, onDe
             onDeleteMessage={onDeleteMessage}
             onFeedback={onFeedback}
             compact={compact}
+            showRecommendations={showRecommendations}
           />
         ))}
         <div ref={bottomRef} />

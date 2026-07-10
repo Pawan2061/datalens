@@ -47,6 +47,7 @@ export default function ChatPanel({
   const user = useAuthStore((s) => s.user);
   const isPrivileged = useAuthStore((s) => s.isPrivileged);
   const isModerator = useAuthStore((s) => s.isModerator);
+  const isCustomerScoped = useAuthStore((s) => s.isCustomerScoped);
   const warnThreshold = user?.cost_warn_threshold_usd ?? 2;
   const todaySpend = user?.today_cost_usd ?? 0;
   const showCostWarning =
@@ -104,6 +105,7 @@ export default function ChatPanel({
         onDeleteMessage={onDeleteMessage}
         onFeedback={onFeedback}
         compact={compact}
+        showRecommendations={isCustomerScoped}
       />
       <ChatInput
         onSend={onSend}
