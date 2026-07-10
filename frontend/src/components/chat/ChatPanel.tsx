@@ -60,6 +60,13 @@ export default function ChatPanel({
     [onFollowUp]
   );
 
+  const handleRecommendation = useCallback(
+    (question: string) => {
+      onSend(question, 'quick');
+    },
+    [onSend]
+  );
+
   return (
     <div className="wv-chat-area">
       {/* Scope selector — always visible when connected */}
@@ -106,12 +113,13 @@ export default function ChatPanel({
         onFeedback={onFeedback}
         compact={compact}
         showRecommendations={isCustomerScoped}
+        onRecommendation={handleRecommendation}
       />
       <ChatInput
         onSend={onSend}
         isLoading={isLoading}
         disabled={!hasConnection}
-        showSuggestions={showSuggestions && !compact}
+        showSuggestions={showSuggestions && !compact && !isCustomerScoped}
         placeholder={hasConnection ? 'Ask about your data...' : 'Connect a database to start'}
       />
     </div>

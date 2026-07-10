@@ -1750,6 +1750,42 @@ body {
   max-width: 280px;
   margin: 0;
 }
+.chat-empty-recommendations {
+  width: min(560px, 100%);
+  margin-top: 22px;
+}
+.chat-empty-recommendations-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+}
+.chat-empty-recommendations-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.chat-empty-recommendations-grid button {
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid #e0e7ff;
+  border-radius: 8px;
+  background: #fff;
+  color: #4b5563;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.chat-empty-recommendations-grid button:hover {
+  border-color: #c7d2fe;
+  color: #4f46e5;
+  background: #f8faff;
+}
 
 /* Chat input area */
 .chat-input-area {
