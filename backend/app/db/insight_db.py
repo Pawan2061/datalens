@@ -23,6 +23,7 @@ _JSONB_COLS: dict[str, set[str]] = {
     "connections": {"config"},
     "workspace_profiles": {"raw_profile"},
     "analytics_events": {"step_timings"},
+    "scheduled_prompts": {"email_recipients", "schedule_days"},
 }
 
 # ---------------------------------------------------------------------------
@@ -154,6 +155,43 @@ ALTER TABLE analytics_events ADD COLUMN IF NOT EXISTS total_rows INTEGER NOT NUL
 ALTER TABLE analytics_events ADD COLUMN IF NOT EXISTS cached BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_analytics_events_workspace_id ON analytics_events (workspace_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_timestamp ON analytics_events (timestamp);
+
+CREATE TABLE IF NOT EXISTS scheduled_prompts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL DEFAULT '',
+    workspace_id TEXT NOT NULL DEFAULT '',
+    connection_id TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL DEFAULT '',
+    prompt_text TEXT NOT NULL DEFAULT '',
+    analysis_mode TEXT NOT NULL DEFAULT 'quick',
+    email_recipients JSONB NOT NULL DEFAULT '[]',
+    email_subject TEXT NOT NULL DEFAULT '',
+    schedule_time TEXT NOT NULL DEFAULT '',
+    schedule_timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+    schedule_days JSONB NOT NULL DEFAULT '["mon","tue","wed","thu","fri","sat","sun"]',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_executed_at TEXT NOT NULL DEFAULT '',
+    next_execution_at TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_prompts_user_id ON scheduled_prompts (user_id);
+CREATE INDEX IF NOT EXISTS idx_scheduled_prompts_due ON scheduled_prompts (is_active, next_execution_at);
+
+CREATE TABLE IF NOT EXISTS scheduled_prompt_executions (
+    id TEXT PRIMARY KEY,
+    scheduled_prompt_id TEXT NOT NULL DEFAULT '',
+    user_id TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT '',
+    response TEXT NOT NULL DEFAULT '',
+    email_sent BOOLEAN NOT NULL DEFAULT FALSE,
+    email_error TEXT NOT NULL DEFAULT '',
+    error_message TEXT NOT NULL DEFAULT '',
+    execution_time_ms DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_prompt_executions_prompt_id ON scheduled_prompt_executions (scheduled_prompt_id);
+CREATE INDEX IF NOT EXISTS idx_scheduled_prompt_executions_created_at ON scheduled_prompt_executions (created_at);
 """
 
 

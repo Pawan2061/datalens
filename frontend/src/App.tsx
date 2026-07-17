@@ -6,6 +6,7 @@ import WorkspaceView from './pages/WorkspaceView';
 import PendingApprovalPage from './pages/PendingApprovalPage';
 import AdminDashboard from './pages/AdminDashboard';
 import AnalyticsDashboard from './pages/AnalyticsDashboard';
+import ScheduledPromptsPage from './pages/ScheduledPromptsPage';
 import { useAuthStore } from './store/authStore';
 import { useWorkspaceStore } from './store/workspaceStore';
 
@@ -185,6 +186,7 @@ export default function App() {
         <Route path="/pending" element={<PendingApprovalPage />} />
         <Route path="/admin" element={<ProtectedRoute privilegedOnly><AdminDashboard /></ProtectedRoute>} />
         <Route path="/analytics" element={<ProtectedRoute privilegedOnly excludeModerator><AnalyticsDashboard /></ProtectedRoute>} />
+        <Route path="/scheduled-prompts" element={<ProtectedRoute privilegedOnly excludeModerator><ScheduledPromptsPage /></ProtectedRoute>} />
         <Route path="/" element={<ProtectedRoute><HomeRoute /></ProtectedRoute>} />
         <Route path="/workspace/:workspaceId" element={<ProtectedRoute><ErrorBoundary><WorkspaceView /></ErrorBoundary></ProtectedRoute>} />
       </Routes>

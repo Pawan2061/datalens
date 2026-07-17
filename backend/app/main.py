@@ -6,10 +6,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent import cache_warmer
-from app.api.routes import admin, analytics, chat, connections, email, health, scope, users, persistence, profiles
+from app.api.routes import admin, analytics, chat, connections, email, health, scheduled_prompts, scope, users, persistence, profiles
 from app.config import settings
 from app.db.connection_manager import connection_manager
 from app.db.insight_db import insight_db
+from app.services.scheduled_prompt_service import (
+    start_scheduled_prompt_runner,
+    stop_scheduled_prompt_runner,
+)
 
 
 # Root logger config — without this, every `logger.info(...)` in the app
@@ -32,10 +36,12 @@ async def lifespan(_app: FastAPI):
 
     # Start the Anthropic prompt-cache warmer (no-op unless enabled + anthropic)
     cache_warmer.start()
+    start_scheduled_prompt_runner()
 
     yield
 
     # Shutdown
+    await stop_scheduled_prompt_runner()
     await cache_warmer.stop()
 
 
@@ -59,3 +65,4 @@ app.include_router(scope.router, tags=["scope"])
 app.include_router(admin.router, tags=["admin"])
 app.include_router(analytics.router, tags=["analytics"])
 app.include_router(email.router, tags=["email"])
+app.include_router(scheduled_prompts.router, tags=["scheduled-prompts"])
