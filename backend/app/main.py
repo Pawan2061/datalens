@@ -10,6 +10,10 @@ from app.api.routes import admin, analytics, chat, connections, email, health, s
 from app.config import settings
 from app.db.connection_manager import connection_manager
 from app.db.insight_db import insight_db
+from app.services.scheduled_prompt_service import (
+    start_scheduled_prompt_runner,
+    stop_scheduled_prompt_runner,
+)
 
 
 # Root logger config — without this, every `logger.info(...)` in the app
@@ -32,10 +36,12 @@ async def lifespan(_app: FastAPI):
 
     # Start the Anthropic prompt-cache warmer (no-op unless enabled + anthropic)
     cache_warmer.start()
+    start_scheduled_prompt_runner()
 
     yield
 
     # Shutdown
+    await stop_scheduled_prompt_runner()
     await cache_warmer.stop()
 
 

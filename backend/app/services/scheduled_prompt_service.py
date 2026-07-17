@@ -10,6 +10,7 @@ from datetime import datetime, time as dt_time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.agent.graph import run_agent
+from app.config import settings
 from app.db.insight_db import insight_db
 from app.services.email_service import send_alert_email
 
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 CRON_ADVISORY_LOCK_ID = 124_708_401
+_runner_task: asyncio.Task | None = None
 
 
 def utc_now_iso() -> str:
@@ -41,6 +43,38 @@ def normalize_email_list(emails: list[str]) -> list[str]:
 
 def extract_prompt_emails(prompt: str) -> list[str]:
     return normalize_email_list(EMAIL_RE.findall(prompt or ""))
+
+
+def build_analysis_prompt(prompt_text: str, user_doc: dict) -> str:
+    """Strip delivery instructions before handing the request to the data agent."""
+    cleaned = EMAIL_RE.sub("", prompt_text or "")
+    cleaned = re.sub(r"^\s*(please\s+)?(send|email|mail|forward)\s+me\s+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^\s*(please\s+)?(send|email|mail|forward)\s+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+\b(to|on|at)\s*$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\b(send|email|mail|forward)\s+(me\s+)?(this|it|the report|the data)?\s*(to|on|at)?\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,-")
+    if not cleaned:
+        cleaned = "Generate the requested scheduled report."
+
+    role = user_doc.get("role", "user")
+    scope_note = (
+        "The schedule owner is a privileged user. If no customer, user, or account is named, "
+        "query all available data in the selected workspace."
+        if role in ("admin", "manager", "moderator")
+        else "The schedule owner is a locked user. Use only the server-enforced customer scope for this user."
+    )
+
+    return (
+        "This is an automated scheduled DataLens report. "
+        "Email delivery is handled by the scheduler outside the analytics agent, so do not say that you cannot send email. "
+        f"{scope_note}\n\n"
+        f"Report request: {cleaned}"
+    )
 
 
 def calculate_next_execution(
@@ -131,6 +165,51 @@ async def execute_due_scheduled_prompts(limit: int = 25) -> dict:
     }
 
 
+def start_scheduled_prompt_runner() -> None:
+    global _runner_task
+    if not settings.scheduled_prompts_runner_enabled:
+        logger.info("Scheduled prompt runner disabled")
+        return
+    if _runner_task and not _runner_task.done():
+        return
+    _runner_task = asyncio.create_task(_scheduled_prompt_runner_loop())
+    logger.info(
+        "Scheduled prompt runner started: interval=%ss",
+        settings.scheduled_prompts_runner_interval_seconds,
+    )
+
+
+async def stop_scheduled_prompt_runner() -> None:
+    global _runner_task
+    if not _runner_task:
+        return
+    _runner_task.cancel()
+    try:
+        await _runner_task
+    except asyncio.CancelledError:
+        pass
+    _runner_task = None
+    logger.info("Scheduled prompt runner stopped")
+
+
+async def _scheduled_prompt_runner_loop() -> None:
+    interval = max(15, int(settings.scheduled_prompts_runner_interval_seconds or 60))
+    while True:
+        try:
+            if insight_db.is_ready:
+                result = await execute_due_scheduled_prompts()
+                if result.get("executed"):
+                    logger.info("Scheduled prompt runner executed %s prompt(s)", result["executed"])
+            else:
+                logger.debug("Scheduled prompt runner waiting for persistence")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Scheduled prompt runner tick failed")
+
+        await asyncio.sleep(interval)
+
+
 async def execute_scheduled_prompt(prompt: dict) -> dict:
     started = time.perf_counter()
     prompt_id = prompt["id"]
@@ -148,8 +227,9 @@ async def execute_scheduled_prompt(prompt: dict) -> dict:
             customer_scope_name = user_doc["customer_code"]
             customer_scope_field = "customer_code"
 
+        analysis_prompt = build_analysis_prompt(prompt.get("prompt_text", ""), user_doc)
         result = await run_agent(
-            question=prompt.get("prompt_text", ""),
+            question=analysis_prompt,
             connection_id=prompt.get("connection_id", ""),
             workspace_id=prompt.get("workspace_id", ""),
             analysis_mode=prompt.get("analysis_mode") or "quick",
@@ -264,9 +344,9 @@ def _fetch_user(user_id: str) -> dict:
 
 def insight_to_text(result: dict) -> str:
     parts: list[str] = []
-    summary = result.get("summary")
-    if summary:
-        parts.append(str(summary))
+    summary_text = summary_to_text(result.get("summary"))
+    if summary_text:
+        parts.append(summary_text)
 
     for table in result.get("tables") or []:
         title = table.get("title") or "Table"
@@ -283,8 +363,44 @@ def insight_to_text(result: dict) -> str:
     return "\n".join(parts).strip() or "The scheduled prompt completed, but no report content was generated."
 
 
+def summary_to_text(summary: object) -> str:
+    if not summary:
+        return ""
+    if isinstance(summary, str):
+        return summary
+    if not isinstance(summary, dict):
+        return str(summary)
+
+    parts: list[str] = []
+    title = str(summary.get("title") or "").strip()
+    narrative = str(summary.get("narrative") or "").strip()
+    if title:
+        parts.append(title)
+    if narrative:
+        parts.append(narrative)
+
+    findings = summary.get("key_findings") or []
+    if isinstance(findings, list) and findings:
+        parts.append("Key findings:")
+        for finding in findings:
+            if isinstance(finding, dict):
+                headline = str(finding.get("headline") or "").strip()
+                detail = str(finding.get("detail") or "").strip()
+                if headline and detail:
+                    parts.append(f"- {headline}: {detail}")
+                elif headline or detail:
+                    parts.append(f"- {headline or detail}")
+
+    return "\n".join(parts).strip()
+
+
 def insight_to_email_html(result: dict, prompt_name: str) -> str:
-    body = [f"<p>{html.escape(str(result.get('summary') or 'Scheduled report completed.'))}</p>"]
+    summary_text = summary_to_text(result.get("summary")) or "Scheduled report completed."
+    body = [
+        "<div style='white-space: pre-wrap; line-height: 1.6;'>"
+        f"{html.escape(summary_text)}"
+        "</div>"
+    ]
     for table in result.get("tables") or []:
         columns = table.get("columns") or []
         rows = table.get("data") or []

@@ -107,6 +107,8 @@ class Settings(BaseSettings):
 
     # Scheduled prompts
     scheduled_prompts_cron_secret: str = ""
+    scheduled_prompts_runner_enabled: bool = True
+    scheduled_prompts_runner_interval_seconds: int = 60
 
     # Rate limiting — per-user burst protection on the chat endpoint.
     # In-memory sliding window (no Redis in the stack). Admins bypass.
