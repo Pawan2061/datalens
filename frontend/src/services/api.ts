@@ -44,6 +44,124 @@ async function apiFetch(url: string, options: RequestInit = {}): Promise<Respons
   return response;
 }
 
+export interface ScheduledPrompt {
+  id: string;
+  user_id: string;
+  workspace_id: string;
+  connection_id: string;
+  name: string;
+  prompt_text: string;
+  analysis_mode: 'quick' | 'deep';
+  email_recipients: string[];
+  email_subject: string;
+  schedule_time: string;
+  schedule_timezone: string;
+  schedule_days: string[];
+  is_active: boolean;
+  last_executed_at: string;
+  next_execution_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduledPromptExecution {
+  id: string;
+  scheduled_prompt_id: string;
+  user_id: string;
+  status: 'success' | 'failed';
+  response: string;
+  email_sent: boolean;
+  email_error: string;
+  error_message: string;
+  execution_time_ms: number;
+  created_at: string;
+}
+
+export type ScheduledPromptPayload = {
+  name: string;
+  prompt_text: string;
+  workspace_id: string;
+  connection_id: string;
+  analysis_mode: 'quick' | 'deep';
+  email_recipients: string[];
+  email_subject: string;
+  schedule_time: string;
+  schedule_timezone: string;
+  schedule_days: string[];
+};
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail || body.message || fallback;
+  } catch {
+    const text = await response.text().catch(() => '');
+    return text || fallback;
+  }
+}
+
+export async function fetchScheduledPrompts(): Promise<ScheduledPrompt[]> {
+  const response = await apiFetch(`${API_BASE}/api/scheduled-prompts`);
+  if (!response.ok) {
+    throw new Error(await readApiError(response, `Failed to load scheduled prompts (${response.status})`));
+  }
+  return response.json();
+}
+
+export async function createScheduledPrompt(payload: ScheduledPromptPayload): Promise<ScheduledPrompt> {
+  const response = await apiFetch(`${API_BASE}/api/scheduled-prompts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, `Failed to create scheduled prompt (${response.status})`));
+  }
+  return response.json();
+}
+
+export async function updateScheduledPrompt(
+  id: string,
+  payload: Partial<ScheduledPromptPayload> & { is_active?: boolean },
+): Promise<ScheduledPrompt> {
+  const response = await apiFetch(`${API_BASE}/api/scheduled-prompts/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, `Failed to update scheduled prompt (${response.status})`));
+  }
+  return response.json();
+}
+
+export async function deleteScheduledPrompt(id: string): Promise<void> {
+  const response = await apiFetch(`${API_BASE}/api/scheduled-prompts/${id}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, `Failed to delete scheduled prompt (${response.status})`));
+  }
+}
+
+export async function fetchScheduledPromptExecutions(id: string): Promise<ScheduledPromptExecution[]> {
+  const response = await apiFetch(`${API_BASE}/api/scheduled-prompts/${id}/executions`);
+  if (!response.ok) {
+    throw new Error(await readApiError(response, `Failed to load executions (${response.status})`));
+  }
+  return response.json();
+}
+
+export async function runScheduledPromptsNow(): Promise<{ executed: number; results: unknown[]; skipped?: boolean; reason?: string }> {
+  const response = await apiFetch(`${API_BASE}/api/scheduled-prompts/cron/execute-due`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, `Failed to run scheduled prompts (${response.status})`));
+  }
+  return response.json();
+}
+
 export interface HistoryMessage {
   role: 'user' | 'assistant';
   content: string;

@@ -5,7 +5,7 @@ import {
   Settings, Loader2, AlertTriangle, RefreshCw, Plus, UserPlus,
   MessageSquare, ChevronDown, Database, BarChart3,
   Shield, Search, ChevronRight, LayoutDashboard,
-  Building2, UserCog, ScrollText, TrendingUp, LogOut, Plug, Bot,
+  Building2, UserCog, ScrollText, TrendingUp, LogOut, Plug, Bot, AlarmClock,
 } from 'lucide-react';
 import { useAuthStore, type User } from '../store/authStore';
 import { useWorkspaceStore } from '../store/workspaceStore';
@@ -1289,6 +1289,11 @@ export default function AdminDashboard() {
               <button className="adm-nav-item" onClick={() => navigate('/analytics')}>
                 <TrendingUp size={18} /> Analytics
               </button>
+              {!isModerator && (
+                <button className="adm-nav-item" onClick={() => navigate('/scheduled-prompts')}>
+                  <AlarmClock size={18} /> Scheduled Prompts
+                </button>
+              )}
             </>
           )}
           {/* Usage Logs are admin/manager only — hidden from moderators. */}
@@ -1336,6 +1341,9 @@ export default function AdminDashboard() {
           ))}
           {isPrivileged && (
             <button className="adm-nav-item" onClick={() => navigate('/analytics')}>Analytics</button>
+          )}
+          {isPrivileged && !isModerator && (
+            <button className="adm-nav-item" onClick={() => navigate('/scheduled-prompts')}>Scheduled Prompts</button>
           )}
         </div>
       )}
