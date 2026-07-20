@@ -6055,9 +6055,70 @@ div[style*="position: relative"] > .cr-view-toggle {
   color: #4338ca;
 }
 
+.sched-submit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
 .sched-submit {
   width: 100%;
   justify-content: center;
+}
+
+.sched-test-result {
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #f9fafb;
+  overflow: hidden;
+}
+
+.sched-test-result--ok {
+  border-color: #a7f3d0;
+  background: #f7fefb;
+}
+
+.sched-test-result--fail {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.sched-test-head {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px;
+  border-bottom: 1px solid rgba(209, 213, 219, 0.8);
+  color: #374151;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.sched-test-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sched-test-result--ok .sched-test-head span:first-child {
+  color: #047857;
+}
+
+.sched-test-result--fail .sched-test-head span:first-child {
+  color: #b91c1c;
+}
+
+.sched-test-result pre {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #1f2937;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
 .sched-alert {
@@ -6173,6 +6234,11 @@ div[style*="position: relative"] > .cr-view-toggle {
   cursor: pointer;
 }
 
+.sched-card-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .sched-empty {
   min-height: 120px;
   display: flex;
@@ -6253,7 +6319,8 @@ div[style*="position: relative"] > .cr-view-toggle {
 
 @media (max-width: 560px) {
   .sched-two,
-  .sched-card-main {
+  .sched-card-main,
+  .sched-submit-row {
     grid-template-columns: 1fr;
   }
 

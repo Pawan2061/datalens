@@ -328,6 +328,60 @@ async def execute_scheduled_prompt(prompt: dict) -> dict:
         }
 
 
+async def test_scheduled_prompt(prompt: dict, user_doc: dict | None = None) -> dict:
+    """Run a scheduled prompt immediately without sending email or advancing schedule."""
+    started = time.perf_counter()
+    prompt_id = prompt.get("id") or "draft"
+    user_id = prompt.get("user_id", "")
+
+    try:
+        owner_doc = user_doc or _fetch_user(user_id)
+        customer_scope = ""
+        customer_scope_name = ""
+        customer_scope_field = "customer_id"
+        if owner_doc.get("role") not in ("admin", "manager", "moderator") and owner_doc.get("customer_code"):
+            customer_scope = owner_doc["customer_code"]
+            customer_scope_name = owner_doc["customer_code"]
+            customer_scope_field = "customer_code"
+
+        analysis_prompt = build_analysis_prompt(prompt.get("prompt_text", ""), owner_doc)
+        result = await run_agent(
+            question=analysis_prompt,
+            connection_id=prompt.get("connection_id", ""),
+            workspace_id=prompt.get("workspace_id", ""),
+            analysis_mode=prompt.get("analysis_mode") or "quick",
+            user_id=user_id,
+            customer_scope=customer_scope,
+            customer_scope_name=customer_scope_name,
+            customer_scope_field=customer_scope_field,
+        )
+        response_text = insight_to_text(result or {})
+        return {
+            "prompt_id": prompt_id,
+            "prompt_name": prompt.get("name", ""),
+            "status": "success",
+            "response": response_text[:20000],
+            "email_sent": False,
+            "email_error": "",
+            "error_message": "",
+            "execution_time_ms": round((time.perf_counter() - started) * 1000, 2),
+            "created_at": utc_now_iso(),
+        }
+    except Exception as exc:
+        logger.exception("Scheduled prompt test failed: prompt_id=%s", prompt_id)
+        return {
+            "prompt_id": prompt_id,
+            "prompt_name": prompt.get("name", ""),
+            "status": "failed",
+            "response": "",
+            "email_sent": False,
+            "email_error": "",
+            "error_message": str(exc),
+            "execution_time_ms": round((time.perf_counter() - started) * 1000, 2),
+            "created_at": utc_now_iso(),
+        }
+
+
 def _fetch_user(user_id: str) -> dict:
     users = insight_db.container("users")
     rows = list(
