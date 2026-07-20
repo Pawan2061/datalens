@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 import uuid
+from sqlalchemy.engine import URL
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from app.schemas.connection import ConnectionConfig, ConnectionInfo
@@ -49,16 +50,22 @@ class ConnectionManager:
         logger.info("Restored %d/%d connections from store", restored, len(saved))
 
     async def _restore_sql(self, conn_id: str, config: ConnectionConfig) -> None:
-        url = (
-            f"postgresql+asyncpg://{config.user}:{config.password}"
-            f"@{config.host}:{config.port}/{config.database}"
-        )
+        url = self._build_sqlalchemy_url(config)
         engine = create_async_engine(url, pool_size=5, max_overflow=2)
         try:
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             status = "connected"
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "Failed to restore %s connection %s to %s:%s/%s: %s",
+                config.connector_type,
+                conn_id,
+                config.host,
+                config.port,
+                config.database,
+                e,
+            )
             status = "disconnected"
 
         self._connections[conn_id] = {
@@ -121,7 +128,15 @@ class ConnectionManager:
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             status = "connected"
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "Failed to connect to %s database at %s:%s/%s: %s",
+                config.connector_type,
+                config.host,
+                config.port,
+                config.database,
+                e,
+            )
             status = "disconnected"
 
         self._connections[conn_id] = {
@@ -149,17 +164,22 @@ class ConnectionManager:
     async def _add_sql_connection(self, config: ConnectionConfig) -> ConnectionInfo:
         """Add a PostgreSQL / MySQL / SQL Server connection."""
         conn_id = uuid.uuid4().hex[:12]
-        url = (
-            f"postgresql+asyncpg://{config.user}:{config.password}"
-            f"@{config.host}:{config.port}/{config.database}"
-        )
+        url = self._build_sqlalchemy_url(config)
         engine = create_async_engine(url, pool_size=5, max_overflow=2)
 
         try:
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             status = "connected"
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "Failed to connect to %s database at %s:%s/%s: %s",
+                config.connector_type,
+                config.host,
+                config.port,
+                config.database,
+                e,
+            )
             status = "disconnected"
 
         self._connections[conn_id] = {
@@ -180,6 +200,26 @@ class ConnectionManager:
             host=config.host,
             database=config.database,
             status=status,
+        )
+
+    @staticmethod
+    def _build_sqlalchemy_url(config: ConnectionConfig) -> URL:
+        """Build a SQLAlchemy async URL for the selected SQL connector."""
+        driver_by_type = {
+            "postgresql": "postgresql+asyncpg",
+            "mysql": "mysql+asyncmy",
+        }
+        drivername = driver_by_type.get(config.connector_type)
+        if not drivername:
+            raise ValueError(f"Unsupported SQL connector: {config.connector_type}")
+
+        return URL.create(
+            drivername=drivername,
+            username=config.user,
+            password=config.password,
+            host=config.host,
+            port=config.port,
+            database=config.database,
         )
 
     async def _add_cosmos_connection(self, config: ConnectionConfig) -> ConnectionInfo:
@@ -303,7 +343,17 @@ class ConnectionManager:
                 await conn.execute(text("SELECT 1"))
             entry["status"] = "connected"
             return True
-        except Exception:
+        except Exception as e:
+            cfg = entry.get("config")
+            logger.warning(
+                "Connection test failed for %s connection %s to %s:%s/%s: %s",
+                entry.get("type"),
+                connection_id,
+                getattr(cfg, "host", ""),
+                getattr(cfg, "port", ""),
+                getattr(cfg, "database", ""),
+                e,
+            )
             entry["status"] = "disconnected"
             return False
 

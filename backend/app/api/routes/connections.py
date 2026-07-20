@@ -157,11 +157,11 @@ async def get_schema(connection_id: str):
         engine = connection_manager.get_engine(connection_id)
         if engine is None:
             raise HTTPException(status_code=404, detail="File connection engine not found")
-        schema = await inspect_schema(engine)
+        schema = await inspect_schema(engine, conn_type)
         return schema
 
     engine = connection_manager.get_engine(connection_id)
     if engine is None:
         raise HTTPException(status_code=404, detail="Connection engine not found")
-    schema = await inspect_schema(engine)
+    schema = await inspect_schema(engine, conn_type)
     return schema

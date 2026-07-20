@@ -92,7 +92,7 @@ async def _discover_schema(connection_id: str) -> list[dict]:
     else:
         from app.db.schema_inspector import inspect_schema
         engine = connection_manager.get_engine(connection_id)
-        schema_info = await inspect_schema(engine)
+        schema_info = await inspect_schema(engine, conn_type)
 
     tables = []
     for t in schema_info.tables[:MAX_TABLES]:
@@ -610,13 +610,14 @@ def _detect_line_item_pattern(
         col for col in table.columns
         if not col.name.startswith("_")
         and any(col.name.lower().endswith(s) for s in _LINE_ITEM_KEY_SUFFIXES)
-        and 0 < col.distinct_count < table.row_count * 0.9
+        and 0 < (col.distinct_count or 0) < table.row_count * 0.9
     ]
     if not key_cols:
         return []
 
     for key_col in key_cols[:2]:
-        avg_lines = table.row_count / max(key_col.distinct_count, 1)
+        key_distinct_count = key_col.distinct_count or 0
+        avg_lines = table.row_count / max(key_distinct_count, 1)
         if avg_lines < 1.5:
             continue
 
@@ -641,11 +642,12 @@ def _detect_line_item_pattern(
         stat_cols: list[str] = []
         if not confirmed:
             for col in table.columns:
-                if col.name.startswith("_") or col.distinct_count <= 0:
+                distinct_count = col.distinct_count or 0
+                if col.name.startswith("_") or distinct_count <= 0:
                     continue
                 if not any(t in col.type.lower() for t in _NUMERIC_TYPES):
                     continue
-                ratio = col.distinct_count / max(key_col.distinct_count, 1)
+                ratio = distinct_count / max(key_distinct_count, 1)
                 if 0.2 < ratio < 2.5:
                     stat_cols.append(col.name)
 

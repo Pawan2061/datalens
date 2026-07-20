@@ -50,7 +50,7 @@ class SchemaCache:
             engine = connection_manager.get_engine(connection_id)
             if engine is None:
                 raise ValueError(f"Connection {connection_id} not found")
-            schema = await inspect_schema(engine)
+            schema = await inspect_schema(engine, conn_type)
             formatted = format_schema_for_llm(schema)
 
         self._cache[connection_id] = _CacheEntry(formatted_schema=formatted)
