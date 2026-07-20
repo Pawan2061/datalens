@@ -8,6 +8,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Send,
   Trash2,
   XCircle,
 } from 'lucide-react';
@@ -18,9 +19,12 @@ import {
   fetchScheduledPromptExecutions,
   fetchScheduledPrompts,
   runScheduledPromptsNow,
+  testScheduledPrompt,
+  testScheduledPromptDraft,
   updateScheduledPrompt,
   type ScheduledPrompt,
   type ScheduledPromptExecution,
+  type ScheduledPromptTestResult,
 } from '../services/api';
 
 const DAYS = [
@@ -59,8 +63,11 @@ export default function ScheduledPromptsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testingId, setTestingId] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [testResult, setTestResult] = useState<ScheduledPromptTestResult | null>(null);
 
   const [name, setName] = useState('Daily sales activity');
   const [workspaceId, setWorkspaceId] = useState('');
@@ -149,6 +156,58 @@ export default function ScheduledPromptsPage() {
     }
   };
 
+  const validateDraft = (): boolean => {
+    if (!workspaceId || !connectionId) {
+      setError('Select a workspace and connection first.');
+      return false;
+    }
+    if (promptText.trim().length < 5) {
+      setError('Enter a prompt before testing.');
+      return false;
+    }
+    return true;
+  };
+
+  const testDraft = async () => {
+    setError('');
+    setNotice('');
+    setTestResult(null);
+    if (!validateDraft()) return;
+    setTesting(true);
+    try {
+      const result = await testScheduledPromptDraft({
+        name,
+        prompt_text: promptText,
+        workspace_id: workspaceId,
+        connection_id: connectionId,
+        analysis_mode: mode,
+      });
+      setTestResult(result);
+      setNotice(result.status === 'success' ? 'Test completed.' : 'Test failed.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to test prompt');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const testSaved = async (prompt: ScheduledPrompt) => {
+    setError('');
+    setNotice('');
+    setTestResult(null);
+    setTestingId(prompt.id);
+    setSelectedId(prompt.id);
+    try {
+      const result = await testScheduledPrompt(prompt.id);
+      setTestResult(result);
+      setNotice(result.status === 'success' ? `Test completed for ${prompt.name}.` : `Test failed for ${prompt.name}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to test schedule');
+    } finally {
+      setTestingId('');
+    }
+  };
+
   const toggleActive = async (prompt: ScheduledPrompt) => {
     setError('');
     try {
@@ -197,7 +256,7 @@ export default function ScheduledPromptsPage() {
             <RefreshCw size={15} /> Refresh
           </button>
           <button className="adm-btn adm-btn--primary" onClick={runDueNow} disabled={running}>
-            {running ? <Loader2 size={15} className="ts-spinner" /> : <Play size={15} />} Run due
+            {running ? <Loader2 size={15} className="ts-spinner" /> : <Play size={15} />} Run due now
           </button>
         </div>
       </header>
@@ -288,9 +347,26 @@ export default function ScheduledPromptsPage() {
                 </button>
               ))}
             </div>
-            <button className="adm-btn adm-btn--primary sched-submit" onClick={submit} disabled={saving || loading}>
-              {saving ? <Loader2 size={15} className="ts-spinner" /> : <AlarmClock size={15} />} Schedule prompt
-            </button>
+            <div className="sched-submit-row">
+              <button className="adm-btn adm-btn--secondary sched-submit" onClick={testDraft} disabled={testing || saving || loading}>
+                {testing ? <Loader2 size={15} className="ts-spinner" /> : <Play size={15} />} Test prompt
+              </button>
+              <button className="adm-btn adm-btn--primary sched-submit" onClick={submit} disabled={saving || testing || loading}>
+                {saving ? <Loader2 size={15} className="ts-spinner" /> : <AlarmClock size={15} />} Schedule prompt
+              </button>
+            </div>
+            {testResult && (
+              <div className={testResult.status === 'success' ? 'sched-test-result sched-test-result--ok' : 'sched-test-result sched-test-result--fail'}>
+                <div className="sched-test-head">
+                  <span>
+                    {testResult.status === 'success' ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
+                    Test {testResult.status}
+                  </span>
+                  <span>{Math.round(testResult.execution_time_ms)} ms</span>
+                </div>
+                <pre>{testResult.error_message || testResult.response || 'No output returned.'}</pre>
+              </div>
+            )}
           </div>
         </section>
 
@@ -325,6 +401,9 @@ export default function ScheduledPromptsPage() {
                     <span><Mail size={14} /> Next: {formatDate(item.next_execution_at)}</span>
                   </div>
                   <div className="sched-card-actions">
+                    <button onClick={(event) => { event.stopPropagation(); void testSaved(item); }} disabled={testingId === item.id}>
+                      {testingId === item.id ? <Loader2 size={14} className="ts-spinner" /> : <Send size={14} />} Test
+                    </button>
                     <button onClick={(event) => { event.stopPropagation(); void toggleActive(item); }}>
                       {item.is_active ? 'Pause' : 'Resume'}
                     </button>

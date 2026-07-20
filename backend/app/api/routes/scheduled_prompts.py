@@ -15,6 +15,7 @@ from app.services.scheduled_prompt_service import (
     clean_doc,
     execute_due_scheduled_prompts,
     normalize_email_list,
+    test_scheduled_prompt,
     utc_now_iso,
 )
 
@@ -46,6 +47,14 @@ class ScheduledPromptUpdate(BaseModel):
     schedule_timezone: str | None = None
     schedule_days: list[str] | None = None
     is_active: bool | None = None
+
+
+class ScheduledPromptTestRequest(BaseModel):
+    name: str = Field(default="Draft scheduled prompt", min_length=1, max_length=120)
+    prompt_text: str = Field(min_length=5, max_length=5000)
+    workspace_id: str = Field(min_length=1)
+    connection_id: str = Field(min_length=1)
+    analysis_mode: str = "quick"
 
 
 def _require_db() -> None:
@@ -221,6 +230,41 @@ async def list_executions(
         )
     )
     return [clean_doc(row) for row in rows[:25]]
+
+
+@router.post("/test")
+async def test_draft_scheduled_prompt(
+    data: ScheduledPromptTestRequest,
+    current_user: dict = Depends(_get_scheduler_user),
+):
+    _require_db()
+    _validate_workspace_connection(data.workspace_id, data.connection_id, current_user)
+    prompt = {
+        "id": "draft",
+        "user_id": current_user.get("id", ""),
+        "workspace_id": data.workspace_id,
+        "connection_id": data.connection_id,
+        "name": data.name.strip(),
+        "prompt_text": data.prompt_text.strip(),
+        "analysis_mode": data.analysis_mode if data.analysis_mode in ("quick", "deep") else "quick",
+    }
+    return await test_scheduled_prompt(prompt, current_user)
+
+
+@router.post("/{prompt_id}/test")
+async def test_existing_scheduled_prompt(
+    prompt_id: str,
+    current_user: dict = Depends(_get_scheduler_user),
+):
+    _require_db()
+    existing = _fetch_prompt(prompt_id)
+    _verify_prompt_access(existing, current_user)
+    _validate_workspace_connection(
+        existing.get("workspace_id", ""),
+        existing.get("connection_id", ""),
+        current_user,
+    )
+    return await test_scheduled_prompt(existing)
 
 
 @router.post("/cron/execute-due")

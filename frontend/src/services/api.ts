@@ -90,6 +90,23 @@ export type ScheduledPromptPayload = {
   schedule_days: string[];
 };
 
+export type ScheduledPromptTestPayload = Pick<
+  ScheduledPromptPayload,
+  'name' | 'prompt_text' | 'workspace_id' | 'connection_id' | 'analysis_mode'
+>;
+
+export interface ScheduledPromptTestResult {
+  prompt_id: string;
+  prompt_name: string;
+  status: 'success' | 'failed';
+  response: string;
+  email_sent: boolean;
+  email_error: string;
+  error_message: string;
+  execution_time_ms: number;
+  created_at: string;
+}
+
 async function readApiError(response: Response, fallback: string): Promise<string> {
   try {
     const body = await response.json();
@@ -148,6 +165,28 @@ export async function fetchScheduledPromptExecutions(id: string): Promise<Schedu
   const response = await apiFetch(`${API_BASE}/api/scheduled-prompts/${id}/executions`);
   if (!response.ok) {
     throw new Error(await readApiError(response, `Failed to load executions (${response.status})`));
+  }
+  return response.json();
+}
+
+export async function testScheduledPromptDraft(payload: ScheduledPromptTestPayload): Promise<ScheduledPromptTestResult> {
+  const response = await apiFetch(`${API_BASE}/api/scheduled-prompts/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, `Failed to test scheduled prompt (${response.status})`));
+  }
+  return response.json();
+}
+
+export async function testScheduledPrompt(id: string): Promise<ScheduledPromptTestResult> {
+  const response = await apiFetch(`${API_BASE}/api/scheduled-prompts/${id}/test`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, `Failed to test scheduled prompt (${response.status})`));
   }
   return response.json();
 }
