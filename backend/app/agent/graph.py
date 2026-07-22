@@ -503,6 +503,7 @@ async def run_agent(
     customer_scope: str = "",
     customer_scope_name: str = "",
     customer_scope_field: str = "customer_id",
+    scheduled_report: bool = False,
 ) -> dict | None:
     """Run the LangGraph ReAct agent and stream SSE events.
 
@@ -775,7 +776,23 @@ async def run_agent(
     # and plan. For non-Anthropic providers we concatenate both into a single
     # string — behavior is identical to before.
     static_prefix = system_prompt
-    dynamic_suffix = scope_addendum + plan_addendum
+    scheduled_addendum = ""
+    if scheduled_report:
+        scheduled_addendum = (
+            "\n\n━━ SCHEDULED REPORT MODE ━━\n"
+            "This is an automated report and there is no interactive user available to answer follow-up questions. "
+            "You MUST generate the report in this run. NEVER call ask_clarification and never return a request for "
+            "more information. If the request is incomplete or ambiguous, make the most reasonable business "
+            "assumptions from the wording, workspace profile, and available schema, then query the data. "
+            "For a sales-activity request with no explicit period, use the current day or the latest available "
+            "business date. If no metric is specified, include the primary sales metrics available, such as "
+            "invoice count and net revenue. If a breakdown is named, use that breakdown. Ignore dangling words "
+            "left by email delivery instructions (for example, a trailing 'and', 'on', or 'to'). "
+            "Do not mention assumptions, missing details, or clarification in the report unless the database truly "
+            "contains no usable data.\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        )
+    dynamic_suffix = scope_addendum + plan_addendum + scheduled_addendum
     agent_prompt = static_prefix + dynamic_suffix
 
     # Build dynamic API tools for this workspace and merge with built-in tools.
@@ -789,7 +806,11 @@ async def run_agent(
         )
         if api_tool_configs else []
     )
-    all_tools = ALL_TOOLS + dynamic_api_tools
+    # Scheduled reports have no recipient who can answer a follow-up question.
+    # Keep clarification available for normal chat, but remove it here so an
+    # incomplete scheduled request cannot terminate as a clarification email.
+    base_tools = [refresh_schema, execute_sql] if scheduled_report else ALL_TOOLS
+    all_tools = base_tools + dynamic_api_tools
     # Track dynamic tool names for result handling
     dynamic_tool_names = {t.name for t in dynamic_api_tools}
 
