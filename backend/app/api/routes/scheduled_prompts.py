@@ -28,11 +28,11 @@ class ScheduledPromptCreate(BaseModel):
     workspace_id: str = Field(min_length=1)
     connection_id: str = Field(min_length=1)
     analysis_mode: str = "quick"
-    email_recipients: list[str] = []
+    email_recipients: list[str] = Field(default_factory=list)
     email_subject: str = ""
     schedule_time: str = "22:00"
     schedule_timezone: str = "Asia/Kolkata"
-    schedule_days: list[str] = list(WEEKDAYS)
+    schedule_days: list[str] = Field(default_factory=lambda: list(WEEKDAYS))
 
 
 class ScheduledPromptUpdate(BaseModel):
@@ -55,6 +55,8 @@ class ScheduledPromptTestRequest(BaseModel):
     workspace_id: str = Field(min_length=1)
     connection_id: str = Field(min_length=1)
     analysis_mode: str = "quick"
+    email_recipients: list[str] = Field(default_factory=list)
+    email_subject: str = ""
 
 
 def _require_db() -> None:
@@ -98,8 +100,15 @@ def _validate_workspace_connection(workspace_id: str, connection_id: str, curren
 
 
 def _clean_schedule_days(days: list[str]) -> list[str]:
-    cleaned = [day.lower() for day in days if day.lower() in WEEKDAYS]
+    cleaned = [day.strip().lower() for day in days if isinstance(day, str) and day.strip().lower() in WEEKDAYS]
     return cleaned or list(WEEKDAYS)
+
+
+def _next_execution(schedule_time: str, schedule_days: list[str], schedule_timezone: str) -> str:
+    try:
+        return calculate_next_execution(schedule_time, schedule_days, schedule_timezone)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 async def _get_scheduler_user(current_user: dict = Depends(get_current_user)) -> dict:
@@ -152,7 +161,7 @@ async def create_scheduled_prompt(
         "schedule_days": schedule_days,
         "is_active": True,
         "last_executed_at": "",
-        "next_execution_at": calculate_next_execution(
+        "next_execution_at": _next_execution(
             data.schedule_time,
             schedule_days,
             data.schedule_timezone,
@@ -190,7 +199,7 @@ async def update_scheduled_prompt(
         elif value is not None:
             existing[key] = value.strip() if isinstance(value, str) else value
 
-    existing["next_execution_at"] = calculate_next_execution(
+    existing["next_execution_at"] = _next_execution(
         existing.get("schedule_time", "22:00"),
         existing.get("schedule_days") or list(WEEKDAYS),
         existing.get("schedule_timezone") or "Asia/Kolkata",
@@ -247,6 +256,8 @@ async def test_draft_scheduled_prompt(
         "name": data.name.strip(),
         "prompt_text": data.prompt_text.strip(),
         "analysis_mode": data.analysis_mode if data.analysis_mode in ("quick", "deep") else "quick",
+        "email_recipients": normalize_email_list(data.email_recipients),
+        "email_subject": data.email_subject.strip(),
     }
     return await test_scheduled_prompt(prompt, current_user)
 

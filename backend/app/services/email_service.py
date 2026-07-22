@@ -1,6 +1,7 @@
 import io
 import re
 import smtplib
+import ssl
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
@@ -13,6 +14,11 @@ from app.config import settings
 
 _SKIP_CHART_TYPES = {"kpi", "gauge"}
 _EMAIL_IN_TEXT_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+
+
+class EmailDeliveryError(RuntimeError):
+    """Raised when an SMTP message cannot be delivered to all recipients."""
 
 
 def build_excel_bytes(tables: list[dict], charts: list[dict]) -> bytes | None:
@@ -61,10 +67,12 @@ def send_excel_email(
     filename: str,
 ) -> None:
     """Send an email with an xlsx attachment using the configured SMTP settings."""
+    recipients = [(to or "").strip()]
+    _validate_recipients(recipients)
     header_from, envelope_from = _smtp_from_values()
     msg = MIMEMultipart()
     msg["From"] = header_from
-    msg["To"] = to
+    msg["To"] = recipients[0]
     msg["Subject"] = subject
     msg.attach(MIMEText(body_html, "html"))
 
@@ -77,10 +85,7 @@ def send_excel_email(
     part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
     msg.attach(part)
 
-    with smtplib.SMTP(settings.email_smtp_host, settings.email_smtp_port) as server:
-        server.starttls()
-        server.login(settings.email_smtp_user, settings.email_smtp_pass)
-        server.sendmail(envelope_from, to, msg.as_string())
+    _send_message(envelope_from, recipients, msg)
 
 
 def send_alert_email(*, to: list[str], subject: str, body_html: str) -> None:
@@ -89,17 +94,49 @@ def send_alert_email(*, to: list[str], subject: str, body_html: str) -> None:
     Uses the same SMTP settings/flow as send_excel_email(). Blocking — call
     from a thread (asyncio.to_thread) when on the event loop.
     """
+    recipients = [(recipient or "").strip() for recipient in to]
+    _validate_recipients(recipients)
     header_from, envelope_from = _smtp_from_values()
     msg = MIMEMultipart()
     msg["From"] = header_from
-    msg["To"] = ", ".join(to)
+    msg["To"] = ", ".join(recipients)
     msg["Subject"] = subject
     msg.attach(MIMEText(body_html, "html"))
 
-    with smtplib.SMTP(settings.email_smtp_host, settings.email_smtp_port) as server:
-        server.starttls()
-        server.login(settings.email_smtp_user, settings.email_smtp_pass)
-        server.sendmail(envelope_from, to, msg.as_string())
+    _send_message(envelope_from, recipients, msg)
+
+
+def _validate_recipients(recipients: list[str]) -> None:
+    if not recipients or any(not _EMAIL_RE.fullmatch((recipient or "").strip()) for recipient in recipients):
+        raise EmailDeliveryError("No valid email recipients were provided.")
+
+
+def _send_message(envelope_from: str, recipients: list[str], message: MIMEMultipart) -> None:
+    host = (settings.email_smtp_host or "").strip()
+    username = (settings.email_smtp_user or "").strip()
+    password = settings.email_smtp_pass or ""
+    if not host or not username or not password:
+        raise EmailDeliveryError("SMTP is not configured. Set EMAIL_SMTP_HOST, EMAIL_SMTP_USER, and EMAIL_SMTP_PASS.")
+    if not envelope_from:
+        raise EmailDeliveryError("SMTP sender is not configured.")
+
+    timeout = max(1, int(settings.email_smtp_timeout_seconds or 30))
+    context = ssl.create_default_context()
+    smtp_cls = smtplib.SMTP_SSL if settings.email_smtp_use_ssl else smtplib.SMTP
+    try:
+        with smtp_cls(settings.email_smtp_host, settings.email_smtp_port, timeout=timeout) as server:
+            server.ehlo()
+            if settings.email_smtp_use_starttls and not settings.email_smtp_use_ssl:
+                server.starttls(context=context)
+                server.ehlo()
+            server.login(username, password)
+            refused = server.sendmail(envelope_from, recipients, message.as_string())
+    except (OSError, smtplib.SMTPException) as exc:
+        raise EmailDeliveryError(f"SMTP delivery failed: {exc}") from exc
+
+    if refused:
+        refused_addresses = ", ".join(sorted(refused))
+        raise EmailDeliveryError(f"SMTP rejected recipient(s): {refused_addresses}")
 
 
 def _smtp_from_values() -> tuple[str, str]:

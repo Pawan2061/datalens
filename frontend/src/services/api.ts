@@ -92,7 +92,7 @@ export type ScheduledPromptPayload = {
 
 export type ScheduledPromptTestPayload = Pick<
   ScheduledPromptPayload,
-  'name' | 'prompt_text' | 'workspace_id' | 'connection_id' | 'analysis_mode'
+  'name' | 'prompt_text' | 'workspace_id' | 'connection_id' | 'analysis_mode' | 'email_recipients' | 'email_subject'
 >;
 
 export interface ScheduledPromptTestResult {
