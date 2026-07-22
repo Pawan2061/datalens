@@ -57,6 +57,15 @@ def build_analysis_prompt(prompt_text: str, user_doc: dict) -> str:
         cleaned,
         flags=re.IGNORECASE,
     )
+    # Email addresses and delivery wording can leave a dangling connector,
+    # e.g. "sales activity by customer on and". It is not part of the report
+    # request and can make the analysis agent think the request is incomplete.
+    cleaned = re.sub(
+        r"(?:\s+(?:and|or|on|at|to)){1,4}\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,-")
     if not cleaned:
         cleaned = "Generate the requested scheduled report."
@@ -243,6 +252,7 @@ async def execute_scheduled_prompt(prompt: dict) -> dict:
             customer_scope=customer_scope,
             customer_scope_name=customer_scope_name,
             customer_scope_field=customer_scope_field,
+            scheduled_report=True,
         )
         response_text = insight_to_text(result or {})
         email_sent, email_error = await _send_scheduled_prompt_email(
@@ -345,6 +355,7 @@ async def test_scheduled_prompt(prompt: dict, user_doc: dict | None = None) -> d
             customer_scope=customer_scope,
             customer_scope_name=customer_scope_name,
             customer_scope_field=customer_scope_field,
+            scheduled_report=True,
         )
         response_text = insight_to_text(result or {})
         email_sent, email_error = await _send_scheduled_prompt_email(
@@ -477,25 +488,20 @@ def summary_to_text(summary: object) -> str:
 
 def insight_to_email_html(result: dict, prompt_name: str) -> str:
     summary_text = summary_to_text(result.get("summary")) or "Scheduled report completed."
-    body = [
-        "<div style='white-space: pre-wrap; line-height: 1.6;'>"
-        f"{html.escape(summary_text)}"
-        "</div>"
-    ]
+    # The agent's narrative is markdown, and it commonly contains tables even
+    # when the structured ``tables`` field is empty. Render those tables here
+    # instead of escaping the whole summary as plain text.
+    body = [_render_summary_email_html(summary_text)]
     for table in result.get("tables") or []:
         columns = table.get("columns") or []
         rows = table.get("data") or []
         if not columns or not rows:
             continue
-        header = "".join(f"<th>{html.escape(str(col))}</th>" for col in columns)
-        body_rows = []
-        for row in rows[:100]:
-            cells = "".join(f"<td>{html.escape(str(row.get(col, '')))}</td>" for col in columns)
-            body_rows.append(f"<tr>{cells}</tr>")
-        body.append(
-            f"<h3>{html.escape(str(table.get('title') or 'Table'))}</h3>"
-            f"<table>{'<thead><tr>' + header + '</tr></thead>'}<tbody>{''.join(body_rows)}</tbody></table>"
-        )
+        body.append(_render_email_table(
+            str(table.get("title") or "Table"),
+            [str(column) for column in columns],
+            [[row.get(column, "") for column in columns] for row in rows[:100]],
+        ))
 
     return f"""
     <div style="font-family: Arial, sans-serif; max-width: 900px; margin: 0 auto; color: #111827;">
@@ -505,9 +511,10 @@ def insight_to_email_html(result: dict, prompt_name: str) -> str:
       </div>
       <div style="border: 1px solid #e5e7eb; border-top: 0; padding: 24px;">
         <style>
-          table {{ width: 100%; border-collapse: collapse; margin: 16px 0 24px; }}
-          th, td {{ text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; font-size: 13px; }}
-          th {{ background: #f9fafb; font-weight: 700; }}
+          table {{ width: 100%; border-collapse: separate; border-spacing: 0; margin: 16px 0 24px; }}
+          th, td {{ padding: 10px 12px; border-right: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; font-size: 13px; vertical-align: top; }}
+          th {{ background: #f3f4f6; color: #111827; font-weight: 700; text-align: left; white-space: nowrap; }}
+          tr:nth-child(even) td {{ background: #fafafa; }}
           h3 {{ margin: 24px 0 8px; font-size: 16px; }}
         </style>
         {''.join(body)}
@@ -515,3 +522,120 @@ def insight_to_email_html(result: dict, prompt_name: str) -> str:
       </div>
     </div>
     """
+
+
+def _render_summary_email_html(text: str) -> str:
+    """Render normal summary text and markdown pipe tables for email HTML."""
+    lines = text.splitlines()
+    blocks: list[str] = []
+    text_lines: list[str] = []
+    index = 0
+
+    def flush_text() -> None:
+        if not text_lines:
+            return
+        escaped = html.escape("\n".join(text_lines)).replace("\n", "<br>")
+        blocks.append(
+            f"<div style='line-height:1.6; margin: 0 0 16px;'>{escaped}</div>"
+        )
+        text_lines.clear()
+
+    while index < len(lines):
+        header = _split_markdown_table_row(lines[index])
+        separator = (
+            _split_markdown_table_row(lines[index + 1])
+            if index + 1 < len(lines)
+            else []
+        )
+        if header and _is_markdown_table_separator(separator):
+            flush_text()
+            table_rows: list[list[str]] = []
+            index += 2
+            while index < len(lines):
+                row = _split_markdown_table_row(lines[index])
+                if not row:
+                    break
+                table_rows.append(row)
+                index += 1
+            blocks.append(_render_email_table("", header, table_rows))
+            continue
+
+        text_lines.append(lines[index])
+        index += 1
+
+    flush_text()
+    return "".join(blocks)
+
+
+def _split_markdown_table_row(line: str) -> list[str]:
+    """Split one markdown pipe-table row, accepting optional outer pipes."""
+    stripped = line.strip()
+    if "|" not in stripped:
+        return []
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|") and not stripped.endswith("\\|"):
+        stripped = stripped[:-1]
+    cells = re.split(r"(?<!\\)\|", stripped)
+    return [cell.replace("\\|", "|").strip() for cell in cells]
+
+
+def _is_markdown_table_separator(cells: list[str]) -> bool:
+    if not cells:
+        return False
+    return all(bool(re.fullmatch(r":?-{3,}:?", cell.replace(" ", ""))) for cell in cells)
+
+
+def _render_email_table(title: str, columns: list[str], rows: list[list[object]]) -> str:
+    """Render a readable, email-client-friendly HTML table."""
+    header = "".join(
+        "<th style='padding:10px 12px; background:#f3f4f6; color:#111827; "
+        "font-weight:700; text-align:left; white-space:nowrap; border-top:1px solid #d1d5db; "
+        "border-right:1px solid #e5e7eb; border-bottom:1px solid #d1d5db;'>"
+        f"{html.escape(str(column))}</th>"
+        for column in columns
+    )
+    body_rows: list[str] = []
+    for row_index, row in enumerate(rows):
+        cells = []
+        for column_index, value in enumerate(row[:len(columns)]):
+            cell_value = "" if value is None else str(value)
+            align = "right" if _looks_numeric(cell_value) else "left"
+            background = "#ffffff" if row_index % 2 == 0 else "#fafafa"
+            cells.append(
+                f"<td style='padding:10px 12px; background:{background}; text-align:{align}; "
+                "border-right:1px solid #e5e7eb; border-bottom:1px solid #e5e7eb; "
+                "vertical-align:top; font-size:13px; line-height:1.4;'>"
+                f"{html.escape(cell_value)}</td>"
+            )
+        if len(row) < len(columns):
+            cells.extend(
+                "<td style='padding:10px 12px; border-bottom:1px solid #e5e7eb;'></td>"
+                for _ in range(len(columns) - len(row))
+            )
+        body_rows.append(f"<tr>{''.join(cells)}</tr>")
+
+    title_html = (
+        f"<h3 style='margin:24px 0 8px; color:#111827; font-size:16px;'>"
+        f"{html.escape(title)}</h3>"
+        if title
+        else ""
+    )
+    return (
+        f"{title_html}<div style='width:100%; overflow-x:auto; margin:16px 0 24px;'>"
+        "<table role='table' cellpadding='0' cellspacing='0' "
+        "style='width:100%; min-width:640px; border-collapse:separate; border-spacing:0; "
+        "border-left:1px solid #e5e7eb; border-top:1px solid #d1d5db;'>"
+        f"<thead><tr>{header}</tr></thead><tbody>{''.join(body_rows)}</tbody></table></div>"
+    )
+
+
+def _looks_numeric(value: str) -> bool:
+    """Use right alignment for common numeric/report values."""
+    normalized = value.strip().replace(",", "").replace("₹", "").replace("$", "")
+    normalized = normalized.replace("%", "").replace("(", "-").replace(")", "")
+    try:
+        float(normalized)
+        return bool(normalized)
+    except ValueError:
+        return False
