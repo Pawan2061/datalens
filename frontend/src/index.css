@@ -5986,6 +5986,25 @@ div[style*="position: relative"] > .cr-view-toggle {
   font-weight: 750;
 }
 
+.sched-new-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  color: #374151;
+  padding: 5px 9px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sched-new-btn:hover {
+  border-color: #9ca3af;
+  background: #f9fafb;
+}
+
 .sched-form {
   display: grid;
   gap: 13px;

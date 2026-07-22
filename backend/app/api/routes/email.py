@@ -1,8 +1,9 @@
 import re
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.api.routes.users import get_current_user
 from app.services.email_service import build_excel_bytes, send_excel_email
 
 router = APIRouter(prefix="/api/email", tags=["email"])
@@ -18,7 +19,7 @@ class SendDataRequest(BaseModel):
 
 
 @router.post("/send-data", status_code=200)
-async def send_data(req: SendDataRequest):
+async def send_data(req: SendDataRequest, _current_user: dict = Depends(get_current_user)):
     if not _EMAIL_RE.match(req.to_email):
         raise HTTPException(status_code=400, detail="Invalid email address")
 

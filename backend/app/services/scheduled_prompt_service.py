@@ -84,22 +84,28 @@ def calculate_next_execution(
     *,
     from_dt: datetime | None = None,
 ) -> str:
-    try:
-        hour, minute = [int(part) for part in schedule_time.split(":", 1)]
-        local_time = dt_time(hour=hour, minute=minute)
-    except Exception as exc:
-        raise ValueError("schedule_time must be HH:MM") from exc
+    if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", schedule_time or ""):
+        raise ValueError("schedule_time must be a valid 24-hour time in HH:MM format")
+    hour, minute = [int(part) for part in schedule_time.split(":", 1)]
+    local_time = dt_time(hour=hour, minute=minute)
 
-    days = [d.lower() for d in (schedule_days or list(WEEKDAYS)) if d.lower() in WEEKDAYS]
+    days = [
+        day.strip().lower()
+        for day in (schedule_days or list(WEEKDAYS))
+        if isinstance(day, str) and day.strip().lower() in WEEKDAYS
+    ]
     if not days:
         days = list(WEEKDAYS)
 
+    timezone_name = (schedule_timezone or "Asia/Kolkata").strip()
     try:
-        tz = ZoneInfo(schedule_timezone or "Asia/Kolkata")
-    except ZoneInfoNotFoundError:
-        tz = ZoneInfo("Asia/Kolkata")
+        tz = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"Unknown schedule timezone: {timezone_name}") from exc
 
     now = from_dt or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     local_now = now.astimezone(tz)
     allowed = {WEEKDAYS.index(day) for day in days}
 
@@ -239,26 +245,11 @@ async def execute_scheduled_prompt(prompt: dict) -> dict:
             customer_scope_field=customer_scope_field,
         )
         response_text = insight_to_text(result or {})
-        recipients = (
-            extract_prompt_emails(prompt.get("prompt_text", ""))
-            or normalize_email_list(prompt.get("email_recipients") or [])
-            or normalize_email_list([user_doc.get("email", "")])
+        email_sent, email_error = await _send_scheduled_prompt_email(
+            prompt=prompt,
+            result=result or {},
+            user_doc=user_doc,
         )
-
-        email_sent = False
-        email_error = ""
-        if recipients:
-            try:
-                await asyncio.to_thread(
-                    send_alert_email,
-                    to=recipients,
-                    subject=prompt.get("email_subject") or f"Scheduled Report: {prompt.get('name') or 'DataLens'}",
-                    body_html=insight_to_email_html(result or {}, prompt.get("name") or "Scheduled Report"),
-                )
-                email_sent = True
-            except Exception as exc:
-                email_error = str(exc)
-                logger.exception("Scheduled prompt email failed: prompt_id=%s", prompt_id)
 
         execution_time_ms = round((time.perf_counter() - started) * 1000, 2)
         executions.create_item(
@@ -329,7 +320,7 @@ async def execute_scheduled_prompt(prompt: dict) -> dict:
 
 
 async def test_scheduled_prompt(prompt: dict, user_doc: dict | None = None) -> dict:
-    """Run a scheduled prompt immediately without sending email or advancing schedule."""
+    """Run a scheduled prompt immediately and send its test email without advancing schedule."""
     started = time.perf_counter()
     prompt_id = prompt.get("id") or "draft"
     user_id = prompt.get("user_id", "")
@@ -356,13 +347,18 @@ async def test_scheduled_prompt(prompt: dict, user_doc: dict | None = None) -> d
             customer_scope_field=customer_scope_field,
         )
         response_text = insight_to_text(result or {})
+        email_sent, email_error = await _send_scheduled_prompt_email(
+            prompt=prompt,
+            result=result or {},
+            user_doc=owner_doc,
+        )
         return {
             "prompt_id": prompt_id,
             "prompt_name": prompt.get("name", ""),
             "status": "success",
             "response": response_text[:20000],
-            "email_sent": False,
-            "email_error": "",
+            "email_sent": email_sent,
+            "email_error": email_error,
             "error_message": "",
             "execution_time_ms": round((time.perf_counter() - started) * 1000, 2),
             "created_at": utc_now_iso(),
@@ -380,6 +376,37 @@ async def test_scheduled_prompt(prompt: dict, user_doc: dict | None = None) -> d
             "execution_time_ms": round((time.perf_counter() - started) * 1000, 2),
             "created_at": utc_now_iso(),
         }
+
+
+def resolve_email_recipients(prompt: dict, user_doc: dict) -> list[str]:
+    return (
+        extract_prompt_emails(prompt.get("prompt_text", ""))
+        or normalize_email_list(prompt.get("email_recipients") or [])
+        or normalize_email_list([user_doc.get("email", "")])
+    )
+
+
+async def _send_scheduled_prompt_email(
+    *,
+    prompt: dict,
+    result: dict,
+    user_doc: dict,
+) -> tuple[bool, str]:
+    recipients = resolve_email_recipients(prompt, user_doc)
+    if not recipients:
+        return False, "No email recipients found."
+
+    try:
+        await asyncio.to_thread(
+            send_alert_email,
+            to=recipients,
+            subject=prompt.get("email_subject") or f"Scheduled Report: {prompt.get('name') or 'DataLens'}",
+            body_html=insight_to_email_html(result, prompt.get("name") or "Scheduled Report"),
+        )
+        return True, ""
+    except Exception as exc:
+        logger.exception("Scheduled prompt email failed: prompt_id=%s", prompt.get("id") or "draft")
+        return False, str(exc)
 
 
 def _fetch_user(user_id: str) -> dict:

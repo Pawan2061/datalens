@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlarmClock,
@@ -6,8 +6,10 @@ import {
   Loader2,
   Mail,
   Play,
+  Pencil,
   Plus,
   RefreshCw,
+  Save,
   Send,
   Trash2,
   XCircle,
@@ -38,6 +40,9 @@ const DAYS = [
 ];
 
 const DEFAULT_PROMPT = 'Send me the sales activity of today on pandeypawan2061@gmail.com';
+const DEFAULT_NAME = 'Daily sales activity';
+const DEFAULT_TIME = '22:00';
+const DEFAULT_TIMEZONE = 'Asia/Kolkata';
 
 function formatDate(value: string): string {
   if (!value) return 'Not scheduled';
@@ -69,12 +74,12 @@ export default function ScheduledPromptsPage() {
   const [notice, setNotice] = useState('');
   const [testResult, setTestResult] = useState<ScheduledPromptTestResult | null>(null);
 
-  const [name, setName] = useState('Daily sales activity');
+  const [name, setName] = useState(DEFAULT_NAME);
   const [workspaceId, setWorkspaceId] = useState('');
   const [connectionId, setConnectionId] = useState('');
   const [promptText, setPromptText] = useState(DEFAULT_PROMPT);
-  const [time, setTime] = useState('22:00');
-  const [timezone, setTimezone] = useState('Asia/Kolkata');
+  const [time, setTime] = useState(DEFAULT_TIME);
+  const [timezone, setTimezone] = useState(DEFAULT_TIMEZONE);
   const [mode, setMode] = useState<'quick' | 'deep'>('quick');
   const [emailRecipients, setEmailRecipients] = useState('');
   const [emailSubject, setEmailSubject] = useState('');
@@ -89,7 +94,35 @@ export default function ScheduledPromptsPage() {
     [items, selectedId],
   );
 
-  const load = async () => {
+  const resetForm = (workspace = workspaces[0]) => {
+    setName(DEFAULT_NAME);
+    setWorkspaceId(workspace?.id || '');
+    setConnectionId(workspace?.connections[0]?.id || workspace?.connectionIds[0] || '');
+    setPromptText(DEFAULT_PROMPT);
+    setTime(DEFAULT_TIME);
+    setTimezone(DEFAULT_TIMEZONE);
+    setMode('quick');
+    setEmailRecipients('');
+    setEmailSubject('');
+    setDays(DAYS.map((day) => day.value));
+    setTestResult(null);
+  };
+
+  const loadPromptIntoForm = useCallback((prompt: ScheduledPrompt) => {
+    setName(prompt.name);
+    setWorkspaceId(prompt.workspace_id);
+    setConnectionId(prompt.connection_id);
+    setPromptText(prompt.prompt_text);
+    setTime(prompt.schedule_time);
+    setTimezone(prompt.schedule_timezone);
+    setMode(prompt.analysis_mode);
+    setEmailRecipients(prompt.email_recipients.join(', '));
+    setEmailSubject(prompt.email_subject);
+    setDays(prompt.schedule_days);
+    setTestResult(null);
+  }, []);
+
+  const load = useCallback(async () => {
     setError('');
     setLoading(true);
     try {
@@ -102,11 +135,11 @@ export default function ScheduledPromptsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [loadWorkspacesFromBackend]);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   useEffect(() => {
     if (!workspaceId && workspaces[0]) {
@@ -114,6 +147,10 @@ export default function ScheduledPromptsPage() {
       setConnectionId(workspaces[0].connections[0]?.id || workspaces[0].connectionIds[0] || '');
     }
   }, [workspaceId, workspaces]);
+
+  useEffect(() => {
+    if (selectedPrompt) loadPromptIntoForm(selectedPrompt);
+  }, [loadPromptIntoForm, selectedPrompt]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -129,12 +166,20 @@ export default function ScheduledPromptsPage() {
     setError('');
     setNotice('');
     if (!workspaceId || !connectionId) {
-      setError('Select a workspace and connection before creating a schedule.');
+      setError('Select a workspace and connection before saving the schedule.');
+      return;
+    }
+    if (days.length === 0) {
+      setError('Select at least one day for the schedule.');
+      return;
+    }
+    if (name.trim().length < 1 || promptText.trim().length < 5) {
+      setError('Enter a schedule name and a prompt of at least 5 characters.');
       return;
     }
     setSaving(true);
     try {
-      const created = await createScheduledPrompt({
+      const payload = {
         name,
         prompt_text: promptText,
         workspace_id: workspaceId,
@@ -145,12 +190,20 @@ export default function ScheduledPromptsPage() {
         schedule_time: time,
         schedule_timezone: timezone,
         schedule_days: days,
-      });
-      setItems((current) => [created, ...current]);
-      setSelectedId(created.id);
-      setNotice('Schedule created.');
+      };
+      if (selectedPrompt) {
+        const updated = await updateScheduledPrompt(selectedPrompt.id, payload);
+        setItems((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+        setSelectedId(updated.id);
+        setNotice('Schedule updated.');
+      } else {
+        const created = await createScheduledPrompt(payload);
+        setItems((current) => [created, ...current]);
+        setSelectedId(created.id);
+        setNotice('Schedule created.');
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create schedule');
+      setError(err instanceof Error ? err.message : 'Failed to save schedule');
     } finally {
       setSaving(false);
     }
@@ -181,9 +234,19 @@ export default function ScheduledPromptsPage() {
         workspace_id: workspaceId,
         connection_id: connectionId,
         analysis_mode: mode,
+        email_recipients: splitEmails(emailRecipients),
+        email_subject: emailSubject,
       });
       setTestResult(result);
-      setNotice(result.status === 'success' ? 'Test completed.' : 'Test failed.');
+      if (result.status !== 'success') {
+        setNotice('Test failed.');
+      } else if (result.email_sent) {
+        setNotice('Test completed and email sent.');
+      } else if (result.email_error) {
+        setNotice(`Test completed but email failed: ${result.email_error}`);
+      } else {
+        setNotice('Test completed without sending email.');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to test prompt');
     } finally {
@@ -200,7 +263,15 @@ export default function ScheduledPromptsPage() {
     try {
       const result = await testScheduledPrompt(prompt.id);
       setTestResult(result);
-      setNotice(result.status === 'success' ? `Test completed for ${prompt.name}.` : `Test failed for ${prompt.name}.`);
+      if (result.status !== 'success') {
+        setNotice(`Test failed for ${prompt.name}.`);
+      } else if (result.email_sent) {
+        setNotice(`Test completed and email sent for ${prompt.name}.`);
+      } else if (result.email_error) {
+        setNotice(`Test completed for ${prompt.name}, but email failed: ${result.email_error}`);
+      } else {
+        setNotice(`Test completed for ${prompt.name} without sending email.`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to test schedule');
     } finally {
@@ -223,7 +294,10 @@ export default function ScheduledPromptsPage() {
     try {
       await deleteScheduledPrompt(prompt.id);
       setItems((current) => current.filter((item) => item.id !== prompt.id));
-      if (selectedId === prompt.id) setSelectedId('');
+      if (selectedId === prompt.id) {
+        setSelectedId('');
+        resetForm();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete schedule');
     }
@@ -243,6 +317,14 @@ export default function ScheduledPromptsPage() {
       setRunning(false);
     }
   };
+
+  const testResultText = testResult
+    ? [
+        testResult.email_sent ? 'Email sent.' : '',
+        testResult.email_error ? `Email failed: ${testResult.email_error}` : '',
+        testResult.error_message || testResult.response || 'No output returned.',
+      ].filter(Boolean).join('\n\n')
+    : '';
 
   return (
     <div className="sched-page">
@@ -267,8 +349,17 @@ export default function ScheduledPromptsPage() {
       <main className="sched-grid">
         <section className="sched-panel">
           <div className="sched-panel-title">
-            <Plus size={18} />
-            <span>Create schedule</span>
+            {selectedPrompt ? <Pencil size={18} /> : <Plus size={18} />}
+            <span>{selectedPrompt ? 'Edit schedule' : 'Create schedule'}</span>
+            {selectedPrompt && (
+              <button
+                type="button"
+                className="sched-new-btn"
+                onClick={() => { setSelectedId(''); resetForm(); }}
+              >
+                <Plus size={14} /> New
+              </button>
+            )}
           </div>
           <div className="sched-form">
             <label>
@@ -352,7 +443,7 @@ export default function ScheduledPromptsPage() {
                 {testing ? <Loader2 size={15} className="ts-spinner" /> : <Play size={15} />} Test prompt
               </button>
               <button className="adm-btn adm-btn--primary sched-submit" onClick={submit} disabled={saving || testing || loading}>
-                {saving ? <Loader2 size={15} className="ts-spinner" /> : <AlarmClock size={15} />} Schedule prompt
+                {saving ? <Loader2 size={15} className="ts-spinner" /> : selectedPrompt ? <Save size={15} /> : <AlarmClock size={15} />} {selectedPrompt ? 'Save changes' : 'Schedule prompt'}
               </button>
             </div>
             {testResult && (
@@ -364,7 +455,7 @@ export default function ScheduledPromptsPage() {
                   </span>
                   <span>{Math.round(testResult.execution_time_ms)} ms</span>
                 </div>
-                <pre>{testResult.error_message || testResult.response || 'No output returned.'}</pre>
+                <pre>{testResultText}</pre>
               </div>
             )}
           </div>

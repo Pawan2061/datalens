@@ -104,6 +104,9 @@ class Settings(BaseSettings):
     email_smtp_user: str = ""
     email_smtp_pass: str = ""
     email_smtp_from: str = ""
+    email_smtp_timeout_seconds: int = 30
+    email_smtp_use_ssl: bool = False
+    email_smtp_use_starttls: bool = True
 
     # Scheduled prompts
     scheduled_prompts_cron_secret: str = ""
