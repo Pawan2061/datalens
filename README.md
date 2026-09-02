@@ -1,5 +1,7 @@
 # DataLens Analytics
 
+> Planning the deterministic DataLens v2 rebuild? Start with the [v2 research and delivery pack](docs/v2/README.md). It is a proposal and does not change the current runtime.
+
 **White-label AI-powered analytics platform** that connects to your databases and lets users ask questions in natural language. An agentic LLM pipeline translates questions into SQL, executes queries, generates charts, and delivers narrative insights — all in real time via streaming.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
